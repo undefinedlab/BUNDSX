@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react'
 import { Coins, FileText, Wallet, Home as HomeIcon } from 'lucide-react'
 import { ConnectWallet } from '../components/connect-wallet'
+import { Home as HomeComponent } from '../components/pages/home'
 
 interface NFT {
   id: string
@@ -51,13 +52,7 @@ export default function Home() {
         {/* Main content area */}
         <main className="flex-1 flex items-center justify-center px-4 py-8 pt-20">
           {/* Home screen */}
-          {activeTab === 'home' && (
-            <div className="w-full max-w-4xl mx-auto text-center">
-              <h1 className="text-4xl font-bold text-gray-800 mb-4">Welcome to BUNDS</h1>
-              <p className="text-xl text-gray-600 mb-8">Your gateway to fractionalized bond trading</p>
-          
-            </div>
-          )}
+          {activeTab === 'home' && <HomeComponent />}
 
           {/* Assets tab */}
           {activeTab === 'assets' && (
