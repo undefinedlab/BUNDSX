@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from 'react'
 import { Coins, FileText, Wallet, Home as HomeIcon } from 'lucide-react'
+import { ConnectWallet } from '../components/connect-wallet'
 
 interface NFT {
   id: string
@@ -44,9 +45,7 @@ export default function Home() {
       <div className="relative z-10 flex flex-col min-h-screen">
         {/* Top right wallet */}
         <div className="absolute top-6 right-6 z-20">
-          <div className="bg-white/20 backdrop-blur-xl rounded-2xl px-4 py-2 border border-white/30">
-            <span className="text-gray-700 font-medium">Connect Wallet</span>
-          </div>
+          <ConnectWallet />
         </div>
 
         {/* Main content area */}
