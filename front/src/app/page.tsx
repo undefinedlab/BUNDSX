@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react'
 import { Coins, FileText, Wallet, Home as HomeIcon } from 'lucide-react'
 import { ConnectWallet } from '../components/connect-wallet'
 import { Home as HomeComponent } from '../components/pages/home'
+import { Assets } from '../components/pages/assets'
 
 interface NFT {
   id: string
@@ -61,9 +62,10 @@ export default function Home() {
                 <h2 className="text-3xl font-bold text-gray-800 mb-2">Your Assets</h2>
                 <p className="text-gray-600">Manage your NFT collection and view best offers</p>
               </div>
-              <div className="bg-white/20 backdrop-blur-xl rounded-2xl p-8 border border-white/30">
-                <p className="text-center text-gray-600">Assets component will be implemented here</p>
-              </div>
+              <Assets
+                selectedNFTs={selectedNFTs}
+                onSelectedNFTsChange={setSelectedNFTs}
+              />
             </div>
           )}
 

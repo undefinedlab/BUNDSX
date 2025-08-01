@@ -24,7 +24,7 @@ export function Home() {
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-5 items-center">
           
           {/* Left section */}
-          <div className="text-right space-y-4 max-w-sm mr-10 mt-30 opacity-20 hover:opacity-100 transition-opacity duration-300">
+          <div className="text-center space-y-4 max-w-sm mr-20 mt-30 opacity-20 hover:opacity-100 transition-opacity duration-300">
           <div className="space-y-4">
               <h2 className="text-2xl font-bold text-gray-800 leading-tight">
                 Transform Your NFTs Into
@@ -58,7 +58,7 @@ export function Home() {
            </div>
 
                      {/* Right section */}
-           <div className="text-left space-y-4 max-w-sm ml-10 mt-30 opacity-20 hover:opacity-100 transition-opacity duration-300">
+           <div className="text-center space-y-4 max-w-sm ml-20 mt-30 opacity-20 hover:opacity-100 transition-opacity duration-300">
             <div className="space-y-4">
               <h2 className="text-2xl font-bold text-gray-800 leading-tight">
                 Trade, Earn, and Exit with
