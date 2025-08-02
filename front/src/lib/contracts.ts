@@ -339,6 +339,13 @@ export const CURVE_AMM_ABI = [
   },
   {
     "type": "function",
+    "name": "getBondTokenContract",
+    "inputs": [{ "name": "bondId", "type": "uint256" }],
+    "outputs": [{ "name": "", "type": "address" }],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "getTokenBalance",
     "inputs": [
       { "name": "bondId", "type": "uint256" },
