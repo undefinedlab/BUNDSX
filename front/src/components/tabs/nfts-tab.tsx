@@ -3,7 +3,6 @@
 import { useState } from 'react'
 import { Coins, Plus, Filter, Search, ExternalLink } from 'lucide-react'
 import { useNFTs } from '../../hooks/useNFTs'
-import { CreateBondModal } from '../modals/create-bond-modal'
 
 interface NFT {
   id: string
@@ -42,7 +41,6 @@ export function NFTsTab({
   const [searchTerm, setSearchTerm] = useState('')
   const [selectedChain, setSelectedChain] = useState<'all' | 'ethereum' | 'base'>('all')
   const [sortBy, setSortBy] = useState<'name' | 'floorPrice' | 'collection'>('name')
-  const [isCreateBondModalOpen, setIsCreateBondModalOpen] = useState(false)
 
   // Use the hook to fetch real NFT data
   const { nfts: hookNFTs, stats, isLoading: hookLoading, error: hookError, fetchNFTs } = useNFTs()
@@ -83,19 +81,6 @@ export function NFTsTab({
         return 0
     }
   })
-
-  const handleCreateBond = () => {
-    if (selectedNFTs.length === 0) {
-      alert('Please select at least one NFT to create a bond')
-      return
-    }
-    setIsCreateBondModalOpen(true)
-  }
-
-  const handleBondCreated = () => {
-    onBondCreated()
-    onSelectedNFTsChange([]) // Clear selection after bond creation
-  }
 
   const handleSelectAll = () => {
     if (selectedNFTs.length === sortedNFTs.length) {
@@ -152,7 +137,7 @@ export function NFTsTab({
             {selectedNFTs.length === sortedNFTs.length ? 'Deselect All' : 'Select All'}
           </button>
           <button
-            onClick={handleCreateBond}
+            onClick={() => onBondCreated()}
             disabled={selectedNFTs.length === 0}
             className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
           >
@@ -259,14 +244,6 @@ export function NFTsTab({
           ))}
         </div>
       )}
-
-      {/* Create Bond Modal */}
-      <CreateBondModal
-        isOpen={isCreateBondModalOpen}
-        onClose={() => setIsCreateBondModalOpen(false)}
-        selectedNFTs={selectedNFTs}
-        onBondCreated={handleBondCreated}
-      />
     </div>
   )
 } 
