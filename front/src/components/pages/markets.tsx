@@ -201,6 +201,11 @@ export default function MarketsList({ onBuyTokens }: MarketsListProps) {
       marketData.forEach((result, index) => {
         const bondId = existingMarketIds[index]
         console.log(`Processing market ${bondId}:`, result);
+        console.log(`Result status: ${result.status}, Result type: ${typeof result.result}, Is array: ${Array.isArray(result.result)}`);
+        if (Array.isArray(result.result)) {
+          console.log(`Result array length: ${result.result.length}`);
+          console.log(`Result array:`, result.result);
+        }
         
         if (result.status === 'success' && result.result) {
           // Handle both array and object return types
@@ -489,10 +494,10 @@ export default function MarketsList({ onBuyTokens }: MarketsListProps) {
                   
                   {/* Market Details */}
                   <div className="space-y-2 text-sm mb-4">
-                    <div className="flex justify-between">
-                      <span className="text-gray-600">Total Supply:</span>
-                      <span className="font-mono">{formatNumber(market.totalSupply)}</span>
-                    </div>
+                                         <div className="flex justify-between">
+                       <span className="text-gray-600">Total Supply:</span>
+                       <span className="font-mono">{formatNumber(market.totalSupply / BigInt(10 ** 18))}</span>
+                     </div>
                     <div className="flex justify-between">
                       <span className="text-gray-600">ETH Reserve:</span>
                       <span className="font-mono">{formatEthPrice(market.ethReserve)} ETH</span>

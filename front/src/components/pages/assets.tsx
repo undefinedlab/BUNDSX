@@ -5,6 +5,7 @@ import { useAccount } from 'wagmi'
 import { Coins, Wallet, Package, DollarSign, TrendingUp, ExternalLink } from 'lucide-react'
 import { NFTsTab } from '../tabs/nfts-tab'
 import { BondsTab } from '../tabs/bonds-tab'
+import { CreateBond } from './create-bond'
 import { useNFTs } from '../../hooks/useNFTs'
 
 interface NFT {
@@ -32,6 +33,7 @@ export function Assets({ selectedNFTs, onSelectedNFTsChange }: AssetsProps) {
   const [activeTab, setActiveTab] = useState<'nfts' | 'bonds' | 'tokens'>('nfts')
   const [isMounted, setIsMounted] = useState(false)
   const [isLoading, setIsLoading] = useState(false)
+  const [showCreateBond, setShowCreateBond] = useState(false)
 
   // Use the NFT hook to get real data
   const { nfts, stats: nftStats, isLoading: nftLoading, error: nftError } = useNFTs()
@@ -42,8 +44,6 @@ export function Assets({ selectedNFTs, onSelectedNFTsChange }: AssetsProps) {
     totalBonds: 3, // Mock for now
     totalHighestBids: nfts.reduce((sum, nft) => sum + (nft.maxOffer ? parseFloat(nft.maxOffer) : 0), 0)
   }
-
-
 
   useEffect(() => {
     setIsMounted(true)
@@ -59,9 +59,21 @@ export function Assets({ selectedNFTs, onSelectedNFTsChange }: AssetsProps) {
     }
   }
 
+  const handleCreateBond = () => {
+    if (selectedNFTs.length > 0) {
+      setShowCreateBond(true)
+    }
+  }
+
   const handleBondCreated = () => {
-    // Mock bond creation success
-    alert('Bond created successfully!')
+    // Reset selected NFTs after bond creation
+    onSelectedNFTsChange([])
+    setShowCreateBond(false)
+    // You could also refresh the bonds data here
+  }
+
+  const handleBackFromCreateBond = () => {
+    setShowCreateBond(false)
   }
 
   if (!isMounted) {
@@ -77,6 +89,17 @@ export function Assets({ selectedNFTs, onSelectedNFTsChange }: AssetsProps) {
           <p className="text-sm">Connect your wallet to view your NFT collection and bonds</p>
         </div>
       </div>
+    )
+  }
+
+  // Show create bond page if active
+  if (showCreateBond) {
+    return (
+      <CreateBond
+        selectedNFTs={selectedNFTs}
+        onBack={handleBackFromCreateBond}
+        onBondCreated={handleBondCreated}
+      />
     )
   }
 
@@ -115,82 +138,87 @@ export function Assets({ selectedNFTs, onSelectedNFTsChange }: AssetsProps) {
             </div>
             <div>
               <p className="text-gray-600 text-sm">Total Bids</p>
-              <p className="text-gray-800 text-xl font-bold">{stats.totalHighestBids.toFixed(3)} ETH</p>
+              <p className="text-gray-800 text-xl font-bold">{stats.totalHighestBids.toFixed(2)} ETH</p>
             </div>
           </div>
         </div>
       </div>
 
-      {/* Main Content */}
-      <div className="backdrop-blur-md bg-white/80 rounded-2xl border border-gray-200 overflow-hidden shadow-lg">
-        <div className="p-6 border-b border-gray-200">
-          {/* Main Tabs */}
-          <div className="flex items-center justify-between mb-4">
-            <div className="flex space-x-1">
-              <button
-                onClick={() => setActiveTab('nfts')}
-                className={`flex items-center px-4 py-2 rounded-lg transition-colors ${
-                  activeTab === 'nfts'
-                    ? 'bg-gray-800 text-white'
-                    : 'text-gray-600 hover:text-gray-800 hover:bg-gray-100'
-                }`}
-              >
-                <Coins className="h-4 w-4 mr-2" />
-                NFTs 
-              </button>
-              <button
-                onClick={() => setActiveTab('bonds')}
-                className={`flex items-center px-4 py-2 rounded-lg transition-colors ${
-                  activeTab === 'bonds'
-                    ? 'bg-gray-800 text-white'
-                    : 'text-gray-600 hover:text-gray-800 hover:bg-gray-100'
-                }`}
-              >
-                <Package className="h-4 w-4 mr-2" />
-                Bonds 
-              </button>
-              <button
-                onClick={() => setActiveTab('tokens')}
-                className={`flex items-center px-4 py-2 rounded-lg transition-colors ${
-                  activeTab === 'tokens'
-                    ? 'bg-gray-800 text-white'
-                    : 'text-gray-600 hover:text-gray-800 hover:bg-gray-100'
-                }`}
-              >
-                <DollarSign className="h-4 w-4 mr-2" />
-                Tokens
-              </button>
+      {/* Create Bond Button */}
+      {selectedNFTs.length > 0 && (
+        <div className="backdrop-blur-md bg-white/80 rounded-xl border border-gray-200 p-4 shadow-lg">
+          <div className="flex items-center justify-between">
+            <div>
+              <h3 className="font-semibold text-gray-800">Create Bond</h3>
+              <p className="text-sm text-gray-600">
+                {selectedNFTs.length} NFT{selectedNFTs.length !== 1 ? 's' : ''} selected
+              </p>
             </div>
+            <button
+              onClick={handleCreateBond}
+              className="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors font-medium"
+            >
+              Create Bond
+            </button>
           </div>
+        </div>
+      )}
+
+      {/* Tabs */}
+      <div className="backdrop-blur-md bg-white/80 rounded-2xl border border-gray-200 shadow-lg">
+        <div className="flex border-b border-gray-200">
+          <button
+            onClick={() => setActiveTab('nfts')}
+            className={`flex-1 px-6 py-4 text-sm font-medium transition-colors ${
+              activeTab === 'nfts'
+                ? 'text-blue-600 border-b-2 border-blue-600'
+                : 'text-gray-500 hover:text-gray-700'
+            }`}
+          >
+            NFTs
+          </button>
+          <button
+            onClick={() => setActiveTab('bonds')}
+            className={`flex-1 px-6 py-4 text-sm font-medium transition-colors ${
+              activeTab === 'bonds'
+                ? 'text-blue-600 border-b-2 border-blue-600'
+                : 'text-gray-500 hover:text-gray-700'
+            }`}
+          >
+            Bonds
+          </button>
+          <button
+            onClick={() => setActiveTab('tokens')}
+            className={`flex-1 px-6 py-4 text-sm font-medium transition-colors ${
+              activeTab === 'tokens'
+                ? 'text-blue-600 border-b-2 border-blue-600'
+                : 'text-gray-500 hover:text-gray-700'
+            }`}
+          >
+            Tokens
+          </button>
         </div>
 
         <div className="p-6">
-          {/* NFTs Tab */}
           {activeTab === 'nfts' && (
             <NFTsTab
               nfts={nfts}
               selectedNFTs={selectedNFTs}
-              isLoading={nftLoading}
-              error={nftError}
               onToggleNFTSelection={toggleNFTSelection}
               onSelectedNFTsChange={onSelectedNFTsChange}
               onBondCreated={handleBondCreated}
+              isLoading={nftLoading}
+              error={nftError}
             />
           )}
-
-          {/* Bonds Tab */}
           {activeTab === 'bonds' && (
-            <BondsTab onBondRedeemed={handleBondCreated} />
+            <BondsTab />
           )}
-
-          {/* Tokens Tab */}
           {activeTab === 'tokens' && (
-            <div className="space-y-4">
-              <h3 className="text-lg font-semibold text-gray-800">Your Token Holdings</h3>
-              <div className="text-center text-gray-600 py-8">
-                <TrendingUp className="h-16 w-16 mx-auto mb-4 opacity-50" />
-                <p>Token trading interface coming soon...</p>
-              </div>
+            <div className="text-center text-gray-500 py-8">
+              <TrendingUp className="h-12 w-12 mx-auto mb-4 opacity-50" />
+              <h3 className="text-lg font-semibold mb-2">Token Trading</h3>
+              <p className="text-sm">Trade your bond tokens on the marketplace</p>
             </div>
           )}
         </div>
