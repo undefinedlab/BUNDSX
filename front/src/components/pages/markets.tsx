@@ -8,6 +8,7 @@ import { Address, formatEther, parseEther } from 'viem'
 
 interface Market {
   bondId: number
+  bondName: string
   totalSupply: bigint
   tokensForSale: bigint
   tokensSold: bigint
@@ -32,38 +33,69 @@ export default function MarketsList({ onBuyTokens }: MarketsListProps) {
   const [error, setError] = useState<string | null>(null)
   const [refreshing, setRefreshing] = useState(false)
 
-  // Get total markets created to know how many to check
-  const { data: stats, isLoading: isStatsLoading, refetch: refetchStats } = useReadContract({
-    address: CONTRACT_ADDRESSES.CURVE_AMM,
-    abi: CURVE_AMM_ABI,
-    functionName: 'getStats',
+  // Simple approach: check for markets with IDs 1-10
+  const MAX_MARKET_IDS_TO_CHECK = 10
+
+  // Create contracts array to check which markets exist
+  const marketExistsContracts = useMemo(() => {
+    const contracts: any[] = []
+    
+    console.log('Creating contracts to check market existence for IDs 1-10')
+    
+    for (let bondId = 1; bondId <= MAX_MARKET_IDS_TO_CHECK; bondId++) {
+      contracts.push({
+        address: CONTRACT_ADDRESSES.CURVE_AMM,
+        abi: CURVE_AMM_ABI,
+        functionName: 'marketExists',
+        args: [bondId],
+      })
+    }
+    return contracts
+  }, [])
+
+  // Check which markets exist
+  const {
+    data: marketExistsData,
+    isLoading: isMarketExistsLoading,
+    refetch: refetchMarketExists,
+  } = useReadContracts({
+    contracts: marketExistsContracts,
   })
 
-  const totalMarketsCreated = stats?.[0] ? Number(stats[0]) : 0
-  const totalVolumeETH = stats?.[1] ? formatEther(stats[1]) : '0'
-  const totalFeesCollected = stats?.[2] ? formatEther(stats[2]) : '0'
-  
-  // Debug logging
-  console.log('Stats loaded:', { totalMarketsCreated, totalVolumeETH, totalFeesCollected, stats });
+  // Get the list of existing market IDs
+  const existingMarketIds = useMemo(() => {
+    if (!marketExistsData) return []
+    
+    const ids: number[] = []
+    marketExistsData.forEach((result, index) => {
+      const bondId = index + 1
+      if (result.status === 'success' && result.result === true) {
+        ids.push(bondId)
+        console.log(`Market ${bondId} exists`)
+      }
+    })
+    
+    console.log('Existing market IDs:', ids)
+    return ids
+  }, [marketExistsData])
 
-  // Create contracts array for batch reading market info
+  // Create contracts array for batch reading market info for existing markets
   const marketContracts = useMemo(() => {
-    if (totalMarketsCreated === 0) return []
-    const contracts = []
+    if (existingMarketIds.length === 0) return []
+    const contracts: any[] = []
     
-    console.log('Creating contracts for market IDs starting from 1')
+    console.log('Creating contracts for existing market IDs:', existingMarketIds)
     
-    for (let bondId = 1; bondId <= totalMarketsCreated; bondId++) {
-      console.log(`Adding contract call for bondId ${bondId}`)
+    existingMarketIds.forEach(bondId => {
       contracts.push({
         address: CONTRACT_ADDRESSES.CURVE_AMM,
         abi: CURVE_AMM_ABI,
         functionName: 'getMarketInfo',
         args: [bondId],
       })
-    }
+    })
     return contracts
-  }, [totalMarketsCreated])
+  }, [existingMarketIds])
 
   // Batch read all market data
   const {
@@ -80,25 +112,49 @@ export default function MarketsList({ onBuyTokens }: MarketsListProps) {
 
   // Batch fetch token contract addresses for all markets
   const tokenContractContracts = useMemo(() => {
-    if (totalMarketsCreated === 0) return []
-    const contracts = []
+    if (existingMarketIds.length === 0) return []
+    const contracts: any[] = []
     
-    for (let bondId = 1; bondId <= totalMarketsCreated; bondId++) {
+    existingMarketIds.forEach(bondId => {
       contracts.push({
         address: CONTRACT_ADDRESSES.CURVE_AMM,
         abi: CURVE_AMM_ABI,
         functionName: 'getBondTokenContract',
         args: [bondId],
       })
-    }
+    })
     return contracts
-  }, [totalMarketsCreated])
+  }, [existingMarketIds])
+
+  // Batch fetch bond metadata (names) for all markets
+  const bondMetadataContracts = useMemo(() => {
+    if (existingMarketIds.length === 0) return []
+    const contracts: any[] = []
+    
+    existingMarketIds.forEach(bondId => {
+      contracts.push({
+        address: CONTRACT_ADDRESSES.BOND_FACTORY,
+        abi: BOND_FACTORY_ABI,
+        functionName: 'getBondMetadata',
+        args: [bondId],
+      })
+    })
+    return contracts
+  }, [existingMarketIds])
 
   // Explicitly type tokenContractsData as wagmi result type
   const { data: tokenContractsData = [] as { status: string; result?: string }[], isLoading: isTokenContractsLoading } = useReadContracts({
     contracts: tokenContractContracts,
     query: {
       enabled: tokenContractContracts.length > 0,
+    }
+  })
+
+  // Fetch bond metadata
+  const { data: bondMetadataData = [] as { status: string; result?: any }[], isLoading: isBondMetadataLoading } = useReadContracts({
+    contracts: bondMetadataContracts,
+    query: {
+      enabled: bondMetadataContracts.length > 0,
     }
   })
 
@@ -127,7 +183,7 @@ export default function MarketsList({ onBuyTokens }: MarketsListProps) {
 
   // Process market data
   useEffect(() => {
-    if (!marketData || isMarketsLoading || !tokenContractsData || isTokenContractsLoading) {
+    if (!marketData || isMarketsLoading || !tokenContractsData || isTokenContractsLoading || !bondMetadataData || isBondMetadataLoading) {
       setLoading(true)
       return
     }
@@ -136,12 +192,13 @@ export default function MarketsList({ onBuyTokens }: MarketsListProps) {
       console.log('Processing market data:', { 
         marketData, 
         tokenContractsData,
-        marketDataLength: marketData?.length || 0
+        marketDataLength: marketData?.length || 0,
+        existingMarketIds
       });
       
       const processedMarkets: Market[] = []
       marketData.forEach((result, index) => {
-        const bondId = index + 1
+        const bondId = existingMarketIds[index]
         console.log(`Processing market ${bondId}:`, result);
         
         if (result.status === 'success' && result.result) {
@@ -149,8 +206,8 @@ export default function MarketsList({ onBuyTokens }: MarketsListProps) {
           let totalSupply, tokensForSale, tokensSold, ethReserve, currentPrice, isActive, creator, createdAt, tokenContract;
           
           if (Array.isArray(result.result)) {
-            // Array format - expected to have 9 elements (including tokenContract)
-            if (result.result.length >= 9) {
+            // Array format - expected to have 8 elements (getMarketInfo returns 8 values)
+            if (result.result.length >= 8) {
               [
                 totalSupply,
                 tokensForSale,
@@ -159,8 +216,7 @@ export default function MarketsList({ onBuyTokens }: MarketsListProps) {
                 currentPrice,
                 isActive,
                 creator,
-                createdAt,
-                tokenContract
+                createdAt
               ] = result.result;
             } else {
               console.log(`Warning: Market ${bondId} has incomplete data (${result.result.length} elements)`);
@@ -173,7 +229,6 @@ export default function MarketsList({ onBuyTokens }: MarketsListProps) {
               isActive = result.result.length > 5 ? result.result[5] : false;
               creator = result.result.length > 6 ? result.result[6] : '0x0000000000000000000000000000000000000000';
               createdAt = result.result.length > 7 ? result.result[7] : 0;
-              tokenContract = result.result.length > 8 ? result.result[8] : '0x0000000000000000000000000000000000000000';
             }
           } else {
             // Not an array or unexpected format - skip this market
@@ -185,15 +240,12 @@ export default function MarketsList({ onBuyTokens }: MarketsListProps) {
             tokensForSale, 
             tokensSold, 
             isActive,
-            creator,
-            tokenContract
+            creator
           });
           
           // Get token contract address, fallback to zero address if not available
           let finalTokenContract: Address = '0x0000000000000000000000000000000000000000'
-          if (tokenContract && typeof tokenContract === 'string') {
-            finalTokenContract = tokenContract as Address
-          } else if (tokenContractsData && tokenContractsData[index] && tokenContractsData[index].status === 'success' && typeof tokenContractsData[index].result === 'string') {
+          if (tokenContractsData && tokenContractsData[index] && tokenContractsData[index].status === 'success' && typeof tokenContractsData[index].result === 'string') {
             finalTokenContract = tokenContractsData[index].result as Address
           }
           
@@ -205,8 +257,18 @@ export default function MarketsList({ onBuyTokens }: MarketsListProps) {
           const tokensAvailable = tokensForSaleBigInt - tokensSoldBigInt
           console.log(`Calculating tokens available: ${tokensForSaleBigInt} - ${tokensSoldBigInt} = ${tokensAvailable}`)
           
+          // Get bond name from metadata
+          let bondName = 'Unknown Bond'
+          if (bondMetadataData && bondMetadataData[index] && bondMetadataData[index].status === 'success' && bondMetadataData[index].result) {
+            const metadata = bondMetadataData[index].result
+            if (Array.isArray(metadata) && metadata.length >= 1) {
+              bondName = metadata[0] || 'Unknown Bond' // First element is bondName
+            }
+          }
+
           processedMarkets.push({
             bondId,
+            bondName,
             totalSupply: typeof totalSupply === 'bigint' ? totalSupply : BigInt(totalSupply || 0),
             tokensForSale: tokensForSaleBigInt,
             tokensSold: tokensSoldBigInt,
@@ -229,19 +291,19 @@ export default function MarketsList({ onBuyTokens }: MarketsListProps) {
       })
       console.log('Final processed markets:', processedMarkets);
       setMarkets(processedMarkets)
-      setError(processedMarkets.length === 0 ? 'No active markets found' : null)
+      setError(processedMarkets.length === 0 ? 'No markets found' : null)
     } catch (err) {
       console.error('Error processing markets:', err)
       setError(`Error processing markets: ${err}`)
       setMarkets([])
     }
-  }, [marketData, isMarketsLoading, tokenContractsData, isTokenContractsLoading])
+  }, [marketData, isMarketsLoading, tokenContractsData, isTokenContractsLoading, existingMarketIds, bondMetadataData, isBondMetadataLoading])
 
   // Refresh function
   const handleRefresh = async () => {
     setRefreshing(true)
     try {
-      await Promise.all([refetchStats(), refetchMarkets()])
+      await Promise.all([refetchMarketExists(), refetchMarkets()])
     } finally {
       setRefreshing(false)
     }
@@ -297,7 +359,7 @@ export default function MarketsList({ onBuyTokens }: MarketsListProps) {
     return new Date(Number(timestamp) * 1000).toLocaleDateString()
   }
 
-  const isLoadingAny = isStatsLoading || isMarketsLoading || loading
+  const isLoadingAny = isMarketExistsLoading || isMarketsLoading || isBondMetadataLoading || loading
 
   // If a market is selected, show its details (placeholder for now)
   if (selectedMarket !== null) {
@@ -344,7 +406,7 @@ export default function MarketsList({ onBuyTokens }: MarketsListProps) {
             </div>
             <div>
               <p className="text-gray-600 text-sm">Total Markets</p>
-              <p className="text-gray-800 text-xl font-bold">{totalMarketsCreated}</p>
+              <p className="text-gray-800 text-xl font-bold">{existingMarketIds.length}</p>
             </div>
           </div>
         </div>
@@ -356,7 +418,7 @@ export default function MarketsList({ onBuyTokens }: MarketsListProps) {
             </div>
             <div>
               <p className="text-gray-600 text-sm">Active Markets</p>
-              <p className="text-gray-800 text-xl font-bold">{markets.length}</p>
+              <p className="text-gray-800 text-xl font-bold">{markets.filter(m => m.isActive).length}</p>
             </div>
           </div>
         </div>
@@ -368,7 +430,9 @@ export default function MarketsList({ onBuyTokens }: MarketsListProps) {
             </div>
             <div>
               <p className="text-gray-600 text-sm">Total Volume</p>
-              <p className="text-gray-800 text-xl font-bold">{totalVolumeETH} ETH</p>
+              <p className="text-gray-800 text-xl font-bold">
+                {formatEthPrice(markets.reduce((sum, m) => sum + m.ethReserve, BigInt(0)))} ETH
+              </p>
             </div>
           </div>
         </div>
@@ -377,7 +441,7 @@ export default function MarketsList({ onBuyTokens }: MarketsListProps) {
       {/* Markets List */}
       <div className="backdrop-blur-md bg-white/80 rounded-2xl border border-gray-200 overflow-hidden shadow-lg">
         <div className="p-6 border-b border-gray-200">
-          <h2 className="text-xl font-bold">Active Curve Markets</h2>
+          <h2 className="text-xl font-bold">Curve Markets</h2>
           <p className="text-sm text-gray-600">Trade fractionalized bond tokens on exponential bonding curves</p>
         </div>
         
@@ -398,9 +462,23 @@ export default function MarketsList({ onBuyTokens }: MarketsListProps) {
           <div className="p-6">
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
               {markets.map((market) => (
-                <div key={market.bondId} className="border rounded-lg p-4 hover:shadow-md transition-all bg-white hover:bg-gray-50">
+                <div key={market.bondId} className="border rounded-lg p-4 hover:shadow-md transition-all bg-white hover:bg-gray-50 relative">
+                  {/* BaseScan Link Button */}
+                  <a
+                    href={`https://basescan.org/address/${market.tokenContract}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="absolute top-2 right-2 p-1 text-gray-400 hover:text-blue-600 transition-colors"
+                    title="View on BaseScan"
+                  >
+                    <ExternalLink className="h-4 w-4" />
+                  </a>
+                  
                   <div className="flex justify-between items-start mb-3">
-                    <h3 className="font-bold text-lg">Bond #{market.bondId}</h3>
+                    <div>
+                      <h3 className="font-bold text-lg">{market.bondName}</h3>
+                      <p className="text-sm text-gray-500">Bond #{market.bondId}</p>
+                    </div>
                     <span className={`${market.isActive 
                       ? "bg-green-100 text-green-800" 
                       : "bg-red-100 text-red-800"} px-2 py-1 rounded-full text-xs font-medium`}>
@@ -459,7 +537,7 @@ export default function MarketsList({ onBuyTokens }: MarketsListProps) {
             {markets.length === 0 && (
               <div className="text-center py-8 text-gray-600">
                 <Package className="h-12 w-12 mx-auto mb-4 text-gray-400" />
-                <p>No active markets found.</p>
+                <p>No markets found.</p>
                 <p className="text-sm mt-2">Create a market by "pumping" a bond in the Assets tab.</p>
               </div>
             )}

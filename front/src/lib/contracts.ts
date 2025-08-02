@@ -4,8 +4,8 @@ import { Address } from 'viem'
 export const CONTRACT_ADDRESSES = {
   // These will be updated with actual deployed addresses on Base
   BOND_FACTORY: '0xC35A017D122BfD160e3A60f0c2E5b58EbBDDcf6C' as Address, // Replace with deployed Bond Factory address
-  CURVE_AMM: '0x0000000000000000000000000000000000000000' as Address, // Replace with deployed CurveAMM address
-  BOND_TOKEN_FACTORY: '0x0000000000000000000000000000000000000000' as Address, // Replace with deployed BondTokenFactory address
+  CURVE_AMM: '0x4610cBf759FFC0557466B052605AdBEBDab0D1C8' as Address, // Replace with deployed CurveAMM address
+  BOND_TOKEN_FACTORY: '0x4504755bB283c739CeC366A715c006b890a8358c' as Address, // Replace with deployed BondTokenFactory address
 } as const
 
 // Bond Factory ABI - comprehensive functions from bnfc.sol
