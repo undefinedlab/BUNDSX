@@ -431,19 +431,8 @@ export default function MarketsList({ onBuyTokens }: MarketsListProps) {
         </div>
       </div>
 
-      {/* Debug Information */}
-      {process.env.NODE_ENV === 'development' && (
-        <div className="backdrop-blur-md bg-yellow-50/80 rounded-xl border border-yellow-200 p-4 shadow-lg">
-          <h3 className="font-semibold text-yellow-800 mb-2">Debug Information</h3>
-          <div className="text-sm text-yellow-700 space-y-1">
-            <p>Checking markets 0-{MAX_MARKET_IDS_TO_CHECK - 1}</p>
-            <p>Existing market IDs: {existingMarketIds.join(', ') || 'None found'}</p>
-            <p>Markets loaded: {markets.length}</p>
-            <p>Loading states: MarketExists={isMarketExistsLoading}, Markets={isMarketsLoading}, Metadata={isBondMetadataLoading}</p>
-            {marketsError && <p className="text-red-600">Error: {marketsError.message}</p>}
-          </div>
-        </div>
-      )}
+   
+
 
       {/* Stats Cards */}
       <div className="grid grid-cols-3 gap-4">

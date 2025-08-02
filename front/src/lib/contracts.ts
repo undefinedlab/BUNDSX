@@ -3,9 +3,9 @@ import { Address } from 'viem'
 // Contract addresses - Update these after deployment on Base
 export const CONTRACT_ADDRESSES = {
   // These will be updated with actual deployed addresses on Base
-  BOND_FACTORY: '0xD91A5A05593B727009034F89bB3CEa4C2c5C43A1' as Address, // Replace with deployed Bond Factory address
-  CURVE_AMM: '0x79b3e404eD2a75d479Dd13D6e67e1bCE4f08a7dD' as Address, // Replace with deployed CurveAMM address
-  BOND_TOKEN_FACTORY: '0x55bFfE6DDB15B4BE9A46d209086CE936b891aD0f' as Address, // Replace with deployed BondTokenFactory address
+  BOND_FACTORY: '0xf61C938c3D030F02Bd0a1aae2B85988Aef9921CD' as Address, // Replace with deployed Bond Factory address
+  CURVE_AMM: '0xF82Ec796e112E0854977AC46B3883DE168C44821' as Address, // Replace with deployed CurveAMM address
+  BOND_TOKEN_FACTORY: '0xbF075BDC0DB8aE1Cc88EB82962c6A95973CE1baF' as Address, // Replace with deployed BondTokenFactory address
 } as const
 
 // Bond Factory ABI - comprehensive functions from bnfc.sol
@@ -355,7 +355,7 @@ export const CURVE_AMM_ABI = [
       "name": "buyTokens",
       "inputs": [
         { "name": "bondId", "type": "uint256" },
-        { "name": "minTokensOut", "type": "uint256" }
+        { "name": "tokenAmount", "type": "uint256" }
       ],
       "outputs": [],
       "stateMutability": "payable"
@@ -501,6 +501,52 @@ export const CURVE_AMM_ABI = [
       "stateMutability": "pure"
     }
   ] as const
+
+// Add events to CURVE_AMM_ABI
+export const CURVE_AMM_EVENTS = [
+  {
+    "type": "event",
+    "name": "MarketCreated",
+    "inputs": [
+      { "name": "bondId", "type": "uint256", "indexed": true },
+      { "name": "creator", "type": "address", "indexed": true },
+      { "name": "tokenContract", "type": "address", "indexed": false },
+      { "name": "totalSupply", "type": "uint256", "indexed": false },
+      { "name": "tokensForSale", "type": "uint256", "indexed": false },
+      { "name": "timestamp", "type": "uint256", "indexed": false }
+    ]
+  },
+  {
+    "type": "event",
+    "name": "TokensPurchased",
+    "inputs": [
+      { "name": "bondId", "type": "uint256", "indexed": true },
+      { "name": "buyer", "type": "address", "indexed": true },
+      { "name": "tokenAmount", "type": "uint256", "indexed": false },
+      { "name": "ethAmount", "type": "uint256", "indexed": false },
+      { "name": "timestamp", "type": "uint256", "indexed": false }
+    ]
+  },
+  {
+    "type": "event",
+    "name": "TokensSold",
+    "inputs": [
+      { "name": "bondId", "type": "uint256", "indexed": true },
+      { "name": "seller", "type": "address", "indexed": true },
+      { "name": "tokenAmount", "type": "uint256", "indexed": false },
+      { "name": "ethAmount", "type": "uint256", "indexed": false },
+      { "name": "timestamp", "type": "uint256", "indexed": false }
+    ]
+  },
+  {
+    "type": "event",
+    "name": "MarketClosed",
+    "inputs": [
+      { "name": "bondId", "type": "uint256", "indexed": true },
+      { "name": "timestamp", "type": "uint256", "indexed": false }
+    ]
+  }
+] as const
   
 
 // ERC721 ABI for NFT approvals

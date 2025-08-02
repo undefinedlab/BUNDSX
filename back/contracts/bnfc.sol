@@ -615,7 +615,7 @@ contract BondFactory is ReentrancyGuard, Ownable {
         
         // Check if any tokens were sold in the curve
         if (curveAMM != address(0)) {
-            bool marketExists = ICurveAMM(curveAMM).marketExists(bondId);
+            bool marketExists = ICurveAMM(curveAMM).isMarketActive(bondId);
             if (marketExists) {
                 (, , uint256 tokensSold, , , , ,) = ICurveAMM(curveAMM).getMarketInfo(bondId);
                 if (tokensSold > 0) {

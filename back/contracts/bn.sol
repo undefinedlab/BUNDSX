@@ -14,7 +14,7 @@ interface ICurveAMM {
     function burnTokens(uint256 bondId, address user, uint256 amount) external;
     function getTotalSupply(uint256 bondId) external view returns (uint256);
     function getTokensSold(uint256 bondId) external view returns (uint256);
-    function marketExists(uint256 bondId) external view returns (bool);
+    function isMarketActive(uint256 bondId) external view returns (bool);
     function getMarketInfo(uint256 bondId) external view returns (
         uint256 totalSupply,
         uint256 tokensForSale,
@@ -79,6 +79,16 @@ contract BondNFT is ERC721, ReentrancyGuard, Initializable {
         _;
     }
     
+    modifier onlyCurveOrFactoryOrOwner() {
+        require(
+            msg.sender == address(curveAMM) ||
+            msg.sender == address(bondFactory) || 
+            msg.sender == bondData.creator,
+            "Unauthorized"
+        );
+        _;
+    }
+    
     modifier onlyCreator() {
         require(msg.sender == bondData.creator, "Only bond creator");
         _;
@@ -126,10 +136,10 @@ contract BondNFT is ERC721, ReentrancyGuard, Initializable {
     }
     
     /**
-     * @dev Mark bond as fractionalized with specified supply (called by CurveAMM)
+     * @dev Mark bond as fractionalized with specified supply (called by CurveAMM or Factory)
      * @param _totalSupply Total number of tokens to create
      */
-    function markFragmentalized(uint256 _totalSupply) external onlyCurve {
+    function markFragmentalized(uint256 _totalSupply) external onlyCurveOrFactoryOrOwner {
         require(!bondData.isFragmentalized, "Already fractionalized");
         require(_totalSupply > 0 && _totalSupply <= 10**9, "Invalid total supply");
         
@@ -140,9 +150,9 @@ contract BondNFT is ERC721, ReentrancyGuard, Initializable {
     }
     
     /**
-     * @dev Reverse fractionalization when no tokens are sold (creator only)
+     * @dev Reverse fractionalization when no tokens are sold (creator or factory only)
      */
-    function defragmentalize() external onlyCreator nonReentrant {
+    function defragmentalize() external onlyFactoryOrOwner nonReentrant {
         require(bondData.isFragmentalized, "Not fractionalized");
         
         // Check if curve has any sold tokens

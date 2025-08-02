@@ -1,7 +1,7 @@
 'use client'
 
 import { useState } from 'react'
-import { Coins, Plus, Filter, Search, ExternalLink } from 'lucide-react'
+import { Coins, Plus, Search, ExternalLink } from 'lucide-react'
 import { useNFTs } from '../../hooks/useNFTs'
 
 interface NFT {
@@ -26,7 +26,6 @@ interface NFTsTabProps {
   error: string | null
   onToggleNFTSelection: (nft: NFT) => void
   onSelectedNFTsChange: (nfts: NFT[]) => void
-  onBondCreated: () => void
 }
 
 export function NFTsTab({
@@ -35,8 +34,7 @@ export function NFTsTab({
   isLoading: externalLoading,
   error: externalError,
   onToggleNFTSelection,
-  onSelectedNFTsChange,
-  onBondCreated
+  onSelectedNFTsChange
 }: NFTsTabProps) {
   const [searchTerm, setSearchTerm] = useState('')
   const [selectedChain, setSelectedChain] = useState<'all' | 'ethereum' | 'base'>('all')
@@ -135,14 +133,6 @@ export function NFTsTab({
             className="px-3 py-2 text-sm border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors"
           >
             {selectedNFTs.length === sortedNFTs.length ? 'Deselect All' : 'Select All'}
-          </button>
-          <button
-            onClick={() => onBondCreated()}
-            disabled={selectedNFTs.length === 0}
-            className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
-          >
-            <Plus className="h-4 w-4" />
-            Create Bond ({selectedNFTs.length})
           </button>
         </div>
       </div>

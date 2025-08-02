@@ -7,6 +7,7 @@ import { NFTsTab } from '../tabs/nfts-tab'
 import { BondsTab } from '../tabs/bonds-tab'
 import { CreateBond } from './create-bond'
 import { useNFTs } from '../../hooks/useNFTs'
+import { useBonds } from '../../hooks/useBonds'
 
 interface NFT {
   id: string
@@ -37,11 +38,14 @@ export function Assets({ selectedNFTs, onSelectedNFTsChange }: AssetsProps) {
 
   // Use the NFT hook to get real data
   const { nfts, stats: nftStats, isLoading: nftLoading, error: nftError } = useNFTs()
+  
+  // Use the Bonds hook to get real bond data
+  const { bonds, isBondsLoading } = useBonds()
 
-  // Calculate stats from actual NFT data
+  // Calculate stats from actual data
   const stats = {
     totalNFTs: nfts.length,
-    totalBonds: 3, // Mock for now
+    totalBonds: bonds.length,
     totalHighestBids: nfts.reduce((sum, nft) => sum + (nft.maxOffer ? parseFloat(nft.maxOffer) : 0), 0)
   }
 
@@ -114,7 +118,9 @@ export function Assets({ selectedNFTs, onSelectedNFTsChange }: AssetsProps) {
             </div>
             <div>
               <p className="text-gray-600 text-sm">NFTs</p>
-              <p className="text-gray-800 text-xl font-bold">{stats.totalNFTs}</p>
+              <p className="text-gray-800 text-xl font-bold">
+                {nftLoading ? '...' : stats.totalNFTs}
+              </p>
             </div>
           </div>
         </div>
@@ -126,7 +132,9 @@ export function Assets({ selectedNFTs, onSelectedNFTsChange }: AssetsProps) {
             </div>
             <div>
               <p className="text-gray-600 text-sm">Bonds</p>
-              <p className="text-gray-800 text-xl font-bold">{stats.totalBonds}</p>
+              <p className="text-gray-800 text-xl font-bold">
+                {isBondsLoading ? '...' : stats.totalBonds}
+              </p>
             </div>
           </div>
         </div>
@@ -138,7 +146,9 @@ export function Assets({ selectedNFTs, onSelectedNFTsChange }: AssetsProps) {
             </div>
             <div>
               <p className="text-gray-600 text-sm">Total Bids</p>
-              <p className="text-gray-800 text-xl font-bold">{stats.totalHighestBids.toFixed(2)} ETH</p>
+              <p className="text-gray-800 text-xl font-bold">
+                {nftLoading ? '...' : `${stats.totalHighestBids.toFixed(2)} ETH`}
+              </p>
             </div>
           </div>
         </div>
@@ -206,13 +216,15 @@ export function Assets({ selectedNFTs, onSelectedNFTsChange }: AssetsProps) {
               selectedNFTs={selectedNFTs}
               onToggleNFTSelection={toggleNFTSelection}
               onSelectedNFTsChange={onSelectedNFTsChange}
-              onBondCreated={handleBondCreated}
               isLoading={nftLoading}
               error={nftError}
             />
           )}
           {activeTab === 'bonds' && (
-            <BondsTab />
+            <BondsTab onBondRedeemed={() => {
+              // Refresh bonds data when a bond is redeemed
+              // The useBonds hook will handle the refresh automatically
+            }} />
           )}
           {activeTab === 'tokens' && (
             <div className="text-center text-gray-500 py-8">

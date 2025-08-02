@@ -421,7 +421,8 @@ contract CurveAMM is ReentrancyGuard, Ownable {
         uint256 refundAmount = 0;
         
         // Calculate refund for each token being sold (reverse of buy)
-        for (uint256 i = 0; i < tokenAmount; i++) {
+        uint256 tokenAmountNumber = tokenAmount / TOKEN_UNIT;
+        for (uint256 i = 0; i < tokenAmountNumber; i++) {
             uint256 tokenNumber = currentTokenNumber - i;
             if (tokenNumber > 0) {
                 refundAmount += _calculatePrice(tokenNumber);

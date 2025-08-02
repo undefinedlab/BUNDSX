@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useReadContract, useWriteContract, useAccount } from 'wagmi'
 import { Loader2, ArrowLeft, TrendingUp, TrendingDown, Package, X, RefreshCw, Power } from 'lucide-react'
-import { CONTRACT_ADDRESSES, CURVE_AMM_ABI, BOND_FACTORY_ABI } from '../../lib/contracts'
+import { CONTRACT_ADDRESSES, CURVE_AMM_ABI, BOND_FACTORY_ABI, CURVE_AMM_EVENTS } from '../../lib/contracts'
 import { Address, formatEther } from 'viem'
 import { Line } from 'react-chartjs-2'
 import Inventory from './inventory'
@@ -162,24 +162,24 @@ export default function MarketDetails({ bondId, onBack }: MarketDetailsProps) {
 
 
   // Get real sell refund from contract
-  const { data: sellRefundData } = useReadContract({
+  const { data: sellRefundData, isLoading: isSellRefundLoading, error: sellRefundError } = useReadContract({
     address: CONTRACT_ADDRESSES.CURVE_AMM,
     abi: CURVE_AMM_ABI,
     functionName: 'previewSellRefund',
     args: [BigInt(bondId), BigInt(parseInt(sellAmount) || 1)],
     query: {
-      enabled: !!market,
+      enabled: !!market && market.isActive && market.tokensSold > BigInt(0),
     }
   })
 
   // Get default sell refund for 1 token to show real sell price
-  const { data: defaultSellRefundData } = useReadContract({
+  const { data: defaultSellRefundData, isLoading: isDefaultSellRefundLoading, error: defaultSellRefundError } = useReadContract({
     address: CONTRACT_ADDRESSES.CURVE_AMM,
     abi: CURVE_AMM_ABI,
     functionName: 'previewSellRefund',
     args: [BigInt(bondId), BigInt(1)],
     query: {
-      enabled: !!market,
+      enabled: !!market && market.isActive && market.tokensSold > BigInt(0),
     }
   })
 
@@ -193,8 +193,25 @@ export default function MarketDetails({ bondId, onBack }: MarketDetailsProps) {
     }
   })
 
+
+
   // Debug: Log sell refund data and contract balance
   useEffect(() => {
+    console.log('=== SELL REFUND DEBUG ===')
+    console.log('Market state:', market ? {
+      isActive: market.isActive,
+      tokensSold: market.tokensSold.toString(),
+      ethReserve: formatEther(market.ethReserve),
+      bondId: market.bondId
+    } : 'No market')
+    
+    console.log('Sell refund call state:', {
+      isSellRefundLoading,
+      sellRefundError: sellRefundError?.message,
+      sellRefundData: sellRefundData ? 'Available' : 'Not available',
+      sellAmount: sellAmount || '1'
+    })
+    
     if (sellRefundData && Array.isArray(sellRefundData) && sellRefundData.length >= 3) {
       console.log('Contract previewSellRefund data:', {
         totalRefund: formatEther(sellRefundData[0] as bigint),
@@ -202,13 +219,26 @@ export default function MarketDetails({ bondId, onBack }: MarketDetailsProps) {
         userReceives: formatEther(sellRefundData[2] as bigint),
         sellAmount: sellAmount || '1'
       })
+      
+      // Debug: Check if the contract data makes sense
+      if (market) {
+        const totalRefund = sellRefundData[0] as bigint
+        const userReceives = sellRefundData[2] as bigint
+        console.log('Contract validation:')
+        console.log(`- Total refund (${formatEther(totalRefund)} ETH) <= ETH Reserve (${formatEther(market.ethReserve)} ETH): ${totalRefund <= market.ethReserve}`)
+        console.log(`- User receives (${formatEther(userReceives)} ETH) should be > 0: ${userReceives > BigInt(0)}`)
+      }
+    } else if (sellRefundError) {
+      console.log('Sell refund error:', sellRefundError.message)
     }
+    
     if (contractBalance !== undefined && market) {
       console.log('Contract ETH balance:', formatEther(contractBalance))
       console.log('Market ETH reserve:', formatEther(market.ethReserve))
       console.log('Difference (contract - reserve):', formatEther(contractBalance - market.ethReserve))
     }
-  }, [sellRefundData, sellAmount, contractBalance, market])
+    console.log('=== END SELL REFUND DEBUG ===')
+  }, [sellRefundData, sellAmount, contractBalance, market, isSellRefundLoading, sellRefundError])
 
   // Process market data
   useEffect(() => {
@@ -556,27 +586,36 @@ export default function MarketDetails({ bondId, onBack }: MarketDetailsProps) {
     setCurvePoints(curvePoints);
   }, [transactionHistory]) // Add dependencies
 
-  // Calculate token price based on its position
+  // Calculate token price based on its position (linear curve)
   const calculateTokenPrice = (tokenNumber: bigint): bigint => {
     if (tokenNumber === BigInt(0)) return BigInt(0)
     
     const PRICE_SCALE = BigInt(1e15) // 0.001 ETH scale
-    const CURVE_STEEPNESS = BigInt(1000)
     
-    // Price = (n^2 * PRICE_SCALE) / CURVE_STEEPNESS
-    return (tokenNumber * tokenNumber * PRICE_SCALE) / CURVE_STEEPNESS
+    // Price = tokenNumber * PRICE_SCALE (linear curve)
+    return tokenNumber * PRICE_SCALE
+  }
+
+  // Convert wei to ETH for chart display
+  const weiToEth = (wei: bigint): number => {
+    return Number(formatEther(wei))
   }
 
   // Calculate cost to buy tokens - use real contract data
   const calculateBuyCost = (tokenAmount: number): bigint => {
     if (!market || tokenAmount <= 0) return BigInt(0)
     
-    // For now, use the current price * amount as a simple approximation
-    // In a real implementation, we would call previewBuyCost from the contract
-    const totalCost = market.currentPrice * BigInt(tokenAmount)
+    // Calculate the sum of prices for each token being bought
+    const currentTokenNumber = market.tokensSold / BigInt(10 ** 18)
+    let totalCost = BigInt(0)
+    
+    for (let i = 1; i <= tokenAmount; i++) {
+      const tokenNumber = currentTokenNumber + BigInt(i)
+      totalCost += calculateTokenPrice(tokenNumber)
+    }
     
     console.log(`Calculating buy cost for ${tokenAmount} tokens`)
-    console.log(`Current price: ${formatEther(market.currentPrice)} ETH`)
+    console.log(`Current token number: ${currentTokenNumber}`)
     console.log(`Total cost: ${formatEther(totalCost)} ETH`)
     
     return totalCost
@@ -586,16 +625,20 @@ export default function MarketDetails({ bondId, onBack }: MarketDetailsProps) {
   const calculateSellValue = (tokenAmount: number): bigint => {
     if (!market || tokenAmount <= 0) return BigInt(0)
     
-    // Use real contract data: average ETH per token * amount to sell
-    // Prevent division by zero
-    const ethPerToken = market.tokensSold > BigInt(0) ? market.ethReserve / market.tokensSold : BigInt(0)
-    const totalValue = ethPerToken * BigInt(tokenAmount)
+    // Calculate the sum of prices for each token being sold (reverse of buy)
+    const currentTokenNumber = market.tokensSold / BigInt(10 ** 18)
+    let totalValue = BigInt(0)
+    
+    for (let i = 0; i < tokenAmount; i++) {
+      const tokenNumber = currentTokenNumber - BigInt(i)
+      if (tokenNumber > BigInt(0)) {
+        totalValue += calculateTokenPrice(tokenNumber)
+      }
+    }
     
     console.log(`Calculating sell value for ${tokenAmount} tokens`)
-    console.log(`ETH Reserve: ${formatEther(market.ethReserve)} ETH`)
-    console.log(`Tokens Sold: ${market.tokensSold}`)
-    console.log(`ETH per Token: ${formatEther(ethPerToken)} ETH`)
-    console.log(`Total sell value: ${formatEther(totalValue)} ETH`)
+    console.log(`Current token number: ${currentTokenNumber}`)
+    console.log(`Total value: ${formatEther(totalValue)} ETH`)
     
     return totalValue
   }
@@ -610,8 +653,9 @@ export default function MarketDetails({ bondId, onBack }: MarketDetailsProps) {
     // Prevent division by zero
     if (tokensSoldNumber === BigInt(0)) return BigInt(0)
     
-    // Average ETH value per token = ETH Reserve / Tokens Sold (in token numbers)
-    return market.ethReserve / tokensSoldNumber
+    // For linear curve, average price is the middle token price
+    const averageTokenNumber = tokensSoldNumber / BigInt(2) + BigInt(1)
+    return calculateTokenPrice(averageTokenNumber)
   }
 
   // Update estimated costs when buy amount changes - use real contract data
@@ -630,11 +674,10 @@ export default function MarketDetails({ bondId, onBack }: MarketDetailsProps) {
     if (sellRefundData && Array.isArray(sellRefundData) && sellRefundData.length >= 3) {
       setEstimatedSellValue(sellRefundData[2]) // userReceives (after fees)
     } else {
-      const amount = parseInt(sellAmount) || 0
-      const value = calculateSellValue(amount)
-      setEstimatedSellValue(value)
+      // Don't set estimated value if contract data is not available
+      setEstimatedSellValue(BigInt(0))
     }
-  }, [sellAmount, sellRefundData, calculateSellValue])
+  }, [sellAmount, sellRefundData])
 
   // Buy tokens
   const handleBuyTokens = () => {
@@ -650,7 +693,7 @@ export default function MarketDetails({ bondId, onBack }: MarketDetailsProps) {
       address: CONTRACT_ADDRESSES.CURVE_AMM,
       abi: CURVE_AMM_ABI,
       functionName: 'buyTokens',
-      args: [BigInt(bondId), BigInt(amount)],
+      args: [BigInt(bondId), BigInt(amount)], // bondId, tokenAmount
       value: cost
     })
   }
@@ -702,7 +745,7 @@ export default function MarketDetails({ bondId, onBack }: MarketDetailsProps) {
     })
     console.log(`Selling ${amount} tokens`)
     
-    // Use real contract data if available
+    // Use real contract data - this is required for accurate pricing
     if (sellRefundData && Array.isArray(sellRefundData) && sellRefundData.length >= 3) {
       const totalRefund = sellRefundData[0]
       const feeAmount = sellRefundData[1]
@@ -721,57 +764,54 @@ export default function MarketDetails({ bondId, onBack }: MarketDetailsProps) {
         return
       }
     } else {
-      // Fallback to calculated value
-      const calculatedValue = calculateSellValue(amount)
-      console.log(`Calculated value: ${formatEther(calculatedValue)} ETH`)
-      console.log(`ETH Reserve: ${formatEther(market.ethReserve)} ETH`)
-      console.log(`Can afford: ${calculatedValue <= market.ethReserve}`)
-      
-      if (calculatedValue > market.ethReserve) {
-        alert(`Cannot sell ${amount} tokens. Not enough ETH in reserve. Calculated value: ${formatEther(calculatedValue)} ETH, Reserve: ${formatEther(market.ethReserve)} ETH`)
-        return
-      }
+      // Contract data not available - show error
+      alert(`Cannot sell tokens right now. Please wait for contract data to load and try again.`)
+      return
     }
     
     console.log('==================')
     
     setSellStep('selling')
     
-    // Step 1: Approve tokens first
+    // Step 1: Approve tokens first (ERC20 expects wei, so multiply by 10^18)
     console.log(`Step 1: Approving ${amount} tokens for CurveAMM to spend`)
     writeContract({
       address: market.tokenContract,
       abi: ERC20_ABI,
       functionName: 'approve',
-      args: [CONTRACT_ADDRESSES.CURVE_AMM, BigInt(amount)],
+      args: [CONTRACT_ADDRESSES.CURVE_AMM, BigInt(amount * 10**18)],
     }, {
       onSuccess: (data) => {
         console.log('Approval successful, now selling tokens...')
-        // Step 2: Sell tokens after approval
-        console.log(`Step 2: Selling ${amount} tokens`)
-        writeContract({
-          address: CONTRACT_ADDRESSES.CURVE_AMM,
-          abi: CURVE_AMM_ABI,
-          functionName: 'sellTokens',
-          args: [BigInt(bondId), BigInt(amount)],
-        }, {
-          onSuccess: () => {
-            console.log('Sell completed successfully!')
-            setSellStep('idle')
-            setSellAmount('')
-            // Refresh market data to get updated ethReserve
-            refetchMarket()
-            // Force a delay to ensure blockchain state is updated
-            setTimeout(() => {
+        // Step 2: Sell tokens after approval (add delay to ensure approval is mined)
+        setTimeout(() => {
+          console.log(`Step 2: Selling ${amount} tokens`)
+          console.log(`Approved amount: ${amount * 10**18} wei`)
+          console.log(`Selling amount: ${amount} whole tokens`)
+          writeContract({
+            address: CONTRACT_ADDRESSES.CURVE_AMM,
+            abi: CURVE_AMM_ABI,
+            functionName: 'sellTokens',
+            args: [BigInt(bondId), BigInt(amount)],
+          }, {
+            onSuccess: () => {
+              console.log('Sell completed successfully!')
+              setSellStep('idle')
+              setSellAmount('')
+              // Refresh market data to get updated ethReserve
               refetchMarket()
-            }, 2000)
-          },
-          onError: (error) => {
-            console.error('Error selling tokens:', error)
-            setSellStep('idle')
-            alert('Failed to sell tokens. Please try again.')
-          }
-        })
+              // Force a delay to ensure blockchain state is updated
+              setTimeout(() => {
+                refetchMarket()
+              }, 2000)
+            },
+            onError: (error) => {
+              console.error('Error selling tokens:', error)
+              setSellStep('idle')
+              alert('Failed to sell tokens. Please try again.')
+            }
+          })
+        }, 2000) // Wait 2 seconds for approval to be mined
       },
       onError: (error) => {
         console.error('Error approving tokens:', error)
@@ -782,7 +822,7 @@ export default function MarketDetails({ bondId, onBack }: MarketDetailsProps) {
   }
 
   // Handle defragmentalization (close market and redeem NFTs)
-  const handleDefragmentalizeBond = async () => {
+  const handleDefragmentalizeBond = () => {
     if (!market || !address) return
     
     // Check if tokens have been sold
@@ -791,40 +831,89 @@ export default function MarketDetails({ bondId, onBack }: MarketDetailsProps) {
       return
     }
     
-    setIsClosingMarket(true)
-    try {
-      await writeContract({
-        address: CONTRACT_ADDRESSES.BOND_FACTORY,
-        abi: BOND_FACTORY_ABI,
-        functionName: 'defragmentalizeBond',
-        args: [BigInt(bondId)],
-      })
-      
-      // Show success message and go back to markets list
-      alert('Market closed successfully! You can now redeem your NFTs.')
-      onBack()
-    } catch (error: any) {
-      console.error('Error closing market:', error)
-      
-      // Provide more specific error messages
-      let errorMessage = 'Failed to close market. Please try again.'
-      
-      if (error.message) {
-        if (error.message.includes('Cannot defragmentalize bond with sold tokens')) {
-          errorMessage = 'Cannot close market while tokens are sold. All tokens must be returned to the curve first.'
-        } else if (error.message.includes('Only bond creator can defragmentalize')) {
-          errorMessage = 'Only the bond creator can close the market.'
-        } else if (error.message.includes('Bond is not fractionalized')) {
-          errorMessage = 'Bond is not fractionalized. No market to close.'
-        } else if (error.message.includes('Bond already redeemed')) {
-          errorMessage = 'Bond has already been redeemed.'
-        }
-      }
-      
-      alert(errorMessage)
-    } finally {
-      setIsClosingMarket(false)
+    // Check if user is the creator
+    if (market.creator.toLowerCase() !== address.toLowerCase()) {
+      alert('Only the bond creator can close the market.')
+      return
     }
+    
+    // Check if market is already inactive
+    if (!market.isActive) {
+      alert('Market is already closed.')
+      return
+    }
+    
+    // Debug: Log market state before closure
+    console.log('=== MARKET CLOSURE DEBUG ===')
+    console.log('Market state:', {
+      bondId: market.bondId,
+      bondName: market.bondName,
+      isActive: market.isActive,
+      tokensSold: market.tokensSold.toString(),
+      ethReserve: formatEther(market.ethReserve),
+      creator: market.creator,
+      userAddress: address
+    })
+    console.log('=== END MARKET CLOSURE DEBUG ===')
+    
+    // Show confirmation dialog
+    const confirmed = window.confirm(
+      `Are you sure you want to close the market for "${market.bondName}"?\n\n` +
+      `This will:\n` +
+      `• Stop all trading on this bond\n` +
+      `• Allow you to redeem your NFTs\n` +
+      `• Cannot be undone\n\n` +
+      `Click OK to proceed.`
+    )
+    
+    if (!confirmed) return
+    
+    setIsClosingMarket(true)
+    
+    writeContract({
+      address: CONTRACT_ADDRESSES.BOND_FACTORY,
+      abi: BOND_FACTORY_ABI,
+      functionName: 'defragmentalizeBond',
+      args: [BigInt(bondId)],
+    }, {
+      onSuccess: (data) => {
+        console.log('Market closure transaction submitted:', data)
+        // Show success message and go back to markets list
+        alert(
+          `Market closure transaction submitted!\n\n` +
+          `Transaction Hash: ${data}\n\n` +
+          `Once the transaction is confirmed on the blockchain, you will be able to redeem your NFTs from the bond.`
+        )
+        onBack()
+      },
+      onError: (error) => {
+        console.error('Error closing market:', error)
+        
+        // Provide more specific error messages
+        let errorMessage = 'Failed to close market. Please try again.'
+        
+        if (error.message) {
+          if (error.message.includes('Cannot defragmentalize bond with sold tokens')) {
+            errorMessage = 'Cannot close market while tokens are sold. All tokens must be returned to the curve first.'
+          } else if (error.message.includes('Only bond creator can defragmentalize')) {
+            errorMessage = 'Only the bond creator can close the market.'
+          } else if (error.message.includes('Bond is not fractionalized')) {
+            errorMessage = 'Bond is not fractionalized. No market to close.'
+          } else if (error.message.includes('Bond already redeemed')) {
+            errorMessage = 'Bond has already been redeemed.'
+          } else if (error.message.includes('insufficient funds')) {
+            errorMessage = 'Insufficient funds to pay for gas fees.'
+          } else if (error.message.includes('user rejected')) {
+            errorMessage = 'Transaction was cancelled by user.'
+          }
+        }
+        
+        alert(errorMessage)
+      },
+      onSettled: () => {
+        setIsClosingMarket(false)
+      }
+    })
   }
 
   // Reset sell step when amount changes
@@ -970,7 +1059,7 @@ export default function MarketDetails({ bondId, onBack }: MarketDetailsProps) {
         label: 'Bond Price (ETH)',
         data: priceHistory.map(p => ({
           x: p.timestamp ? p.timestamp * 1000 : Date.now(), // Convert to milliseconds for Chart.js
-          y: ensureMinimumValue(p.price, 0.00001) // Use bond price, ensure minimum value with 5 decimals
+          y: ensureMinimumValue(weiToEth(BigInt(Math.floor(p.price * 1e18))), 0.00001) // Convert to proper ETH value
         })),
         borderColor: 'rgb(59, 130, 246)', // blue
         backgroundColor: 'rgba(59, 130, 246, 0.1)',
@@ -1090,10 +1179,10 @@ export default function MarketDetails({ bondId, onBack }: MarketDetailsProps) {
             return Number(value).toFixed(5) + ' ETH'
           }
         },
-        // Set a reasonable max value based on bond prices
+        // Set a reasonable max value based on bond prices (in ETH)
         suggestedMax: Math.max(
           ...priceHistory
-            .map(p => p.price)
+            .map(p => weiToEth(BigInt(Math.floor(p.price * 1e18))))
         ) * 1.2 || 0.001
       }
     },
@@ -1212,15 +1301,10 @@ export default function MarketDetails({ bondId, onBack }: MarketDetailsProps) {
           {/* Close Market button - only show for market creator when market is active and no tokens sold */}
           {market && market.isActive && address && market.creator.toLowerCase() === address.toLowerCase() && (
             <div className="flex flex-col items-end space-y-2">
-              {market.tokensSold > BigInt(0) && (
-                <div className="text-xs text-orange-600 bg-orange-50 px-2 py-1 rounded">
-                  Market cannot be closed while tokens are sold
-                </div>
-              )}
               <button 
                 onClick={handleDefragmentalizeBond}
                 disabled={isClosingMarket || market.tokensSold > BigInt(0)}
-                className="flex items-center gap-2 px-4 py-2 border border-red-300 text-red-700 rounded-lg hover:bg-red-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                className="flex items-center gap-2 px-4 py-2 border border-red-300 text-red-700 rounded-lg hover:bg-red-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed relative group"
                 title={market.tokensSold > BigInt(0) ? "Cannot close market with sold tokens" : "Close market and redeem NFTs"}
               >
                 {isClosingMarket ? (
@@ -1229,6 +1313,13 @@ export default function MarketDetails({ bondId, onBack }: MarketDetailsProps) {
                   <Power className="h-4 w-4" />
                 )}
                 {isClosingMarket ? 'Closing...' : 'Close Market'}
+                
+                {/* Hover tooltip for when tokens are sold */}
+                {market.tokensSold > BigInt(0) && (
+                  <div className="absolute bottom-full right-0 mb-2 px-3 py-2 text-xs text-orange-600 bg-orange-50 border border-orange-200 rounded-lg opacity-0 group-hover:opacity-100 transition-opacity duration-200 whitespace-nowrap z-10">
+                    Market cannot be closed while tokens are sold
+                  </div>
+                )}
               </button>
             </div>
           )}
@@ -1424,7 +1515,7 @@ export default function MarketDetails({ bondId, onBack }: MarketDetailsProps) {
                       <button
                         onClick={handleSellTokens}
                         className="w-full bg-red-600 hover:bg-red-700 text-white py-2 px-3 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed text-sm"
-                        disabled={!market.isActive || parseInt(sellAmount) <= 0 || parseInt(sellAmount) > Number(userBalance) || !address || sellStep === 'selling'}
+                        disabled={!market.isActive || parseInt(sellAmount) <= 0 || parseInt(sellAmount) > Number(userBalance) || !address || sellStep === 'selling' || !sellRefundData}
                       >
                         {sellStep === 'selling' ? (
                           <>
@@ -1441,7 +1532,16 @@ export default function MarketDetails({ bondId, onBack }: MarketDetailsProps) {
                   <div className="mt-2 text-sm text-gray-600">
                     <div className="flex justify-between">
                       <span>You will receive:</span>
-                      <span className="font-medium">{formatEthPrice(estimatedSellValue)} ETH</span>
+                      <span className="font-medium">
+                        {isSellRefundLoading 
+                          ? 'Loading...'
+                          : sellRefundError
+                            ? 'Error: ' + sellRefundError.message
+                            : sellRefundData && Array.isArray(sellRefundData) && sellRefundData.length >= 3 
+                              ? formatEthPrice(estimatedSellValue) + ' ETH'
+                              : 'No data'
+                        }
+                      </span>
                     </div>
                   </div>
                   
