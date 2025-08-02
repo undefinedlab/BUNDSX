@@ -1,9 +1,11 @@
 'use client'
 
 import { useState } from 'react'
-import { Package, RefreshCw, ExternalLink, Calendar, Coins, AlertCircle, CheckCircle, Clock } from 'lucide-react'
+import { Package, RefreshCw, ExternalLink, Calendar, Coins, AlertCircle, CheckCircle, Clock, TrendingUp } from 'lucide-react'
 import { useBonds, Bond } from '../../hooks/useBonds'
 import { useBondRedemption } from '../../hooks/useBondRedemption'
+import { useBondPump } from '../../hooks/useBondPump'
+import { PumpBondModal } from '../modals/pump-bond-modal'
 
 interface BondsTabProps {
   onBondRedeemed?: () => void
@@ -12,9 +14,11 @@ interface BondsTabProps {
 export function BondsTab({ onBondRedeemed }: BondsTabProps) {
   const [searchTerm, setSearchTerm] = useState('')
   const [sortBy, setSortBy] = useState<'name' | 'createdAt' | 'assetCount'>('createdAt')
+  const [isPumpModalOpen, setIsPumpModalOpen] = useState(false)
   
   const { bonds, isBondsLoading, refetchBonds } = useBonds()
   const { redeemBond, isRedeeming, isSuccess, error: redeemError, txHash } = useBondRedemption()
+  const { pumpBond, isPumping, error: pumpError } = useBondPump()
 
   const filteredBonds = bonds.filter(bond => {
     const matchesSearch = bond.bondName.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -50,6 +54,21 @@ export function BondsTab({ onBondRedeemed }: BondsTabProps) {
     refetchBonds()
   }
 
+  // Handler for pump button
+  const handlePump = () => {
+    setIsPumpModalOpen(true)
+  }
+
+  // Handler for pump bond from modal
+  const handlePumpBond = async (bondId: string, bondNFTContract: string, params: any) => {
+    await pumpBond({
+      bondId,
+      bondNFTContract,
+      params
+    })
+    refetchBonds()
+  }
+
   if (isBondsLoading) {
     return (
       <div className="flex items-center justify-center py-12">
@@ -69,6 +88,7 @@ export function BondsTab({ onBondRedeemed }: BondsTabProps) {
         </div>
         
         <div className="flex items-center gap-2">
+   
           <button
             onClick={handleRefresh}
             disabled={isBondsLoading}
@@ -176,8 +196,9 @@ export function BondsTab({ onBondRedeemed }: BondsTabProps) {
                 </div>
               )}
 
-              {/* Actions */}
+              {/* Actions - Three Buttons */}
               <div className="flex gap-2">
+                {/* View on Scan Button */}
                 <a
                   href={`https://basescan.org/address/${bond.bondNFTContract}`}
                   target="_blank"
@@ -185,26 +206,53 @@ export function BondsTab({ onBondRedeemed }: BondsTabProps) {
                   className="flex-1 px-3 py-2 text-sm border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors flex items-center justify-center gap-2"
                 >
                   <ExternalLink className="h-3 w-3" />
-                  View on BaseScan
+                  View
                 </a>
                 
+                {/* Redeem Button */}
                 {!bond.isRedeemed && (
                   <button
-                    className="px-3 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50"
+                    className="flex-1 px-3 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50"
                     disabled={bond.error || isRedeeming}
                     onClick={() => handleRedeem(bond)}
                   >
                     {isRedeeming ? 'Redeeming...' : 'Redeem'}
                   </button>
                 )}
+                
+                {/* Pump Button */}
+                {!bond.isRedeemed && (
+                  <button
+                    className="flex-1 px-3 py-2 text-sm bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
+                    disabled={bond.error || isPumping}
+                    onClick={handlePump}
+                  >
+                    <TrendingUp className="h-3 w-3" />
+                    {isPumping ? 'Pumping...' : 'Pump'}
+                  </button>
+                )}
               </div>
+              
+              {/* Error Messages */}
               {redeemError && (
                 <div className="mt-2 text-xs text-red-600">{redeemError}</div>
+              )}
+              {pumpError && (
+                <div className="mt-2 text-xs text-red-600">{pumpError}</div>
               )}
             </div>
           ))}
         </div>
       )}
+
+      {/* Pump Bond Modal */}
+      <PumpBondModal
+        isOpen={isPumpModalOpen}
+        onClose={() => setIsPumpModalOpen(false)}
+        bonds={bonds.filter(bond => !bond.isRedeemed)}
+        onPumpBond={handlePumpBond}
+        isPumping={isPumping}
+      />
     </div>
   )
 } 
