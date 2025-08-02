@@ -5,6 +5,7 @@ import { useAccount, useReadContract, useReadContracts, useWriteContract } from 
 import { ExternalLink, Loader2, Coins, AlertTriangle, Package, TrendingUp, DollarSign, RefreshCw } from 'lucide-react'
 import { CONTRACT_ADDRESSES, CURVE_AMM_ABI, BOND_FACTORY_ABI } from '../../lib/contracts'
 import { Address, formatEther, parseEther } from 'viem'
+import MarketDetails from './market-details'
 
 interface Market {
   bondId: number
@@ -361,23 +362,13 @@ export default function MarketsList({ onBuyTokens }: MarketsListProps) {
 
   const isLoadingAny = isMarketExistsLoading || isMarketsLoading || isBondMetadataLoading || loading
 
-  // If a market is selected, show its details (placeholder for now)
+  // If a market is selected, show its details
   if (selectedMarket !== null) {
     return (
-      <div className="space-y-6">
-        <div className="flex items-center gap-4">
-          <button
-            onClick={() => setSelectedMarket(null)}
-            className="flex items-center gap-2 text-blue-600 hover:text-blue-800"
-          >
-            ← Back to Markets
-          </button>
-        </div>
-        <div className="text-center py-12">
-          <h2 className="text-2xl font-bold mb-4">Market Details for Bond #{selectedMarket}</h2>
-          <p className="text-gray-600">Market details component coming soon...</p>
-        </div>
-      </div>
+      <MarketDetails 
+        bondId={selectedMarket} 
+        onBack={() => setSelectedMarket(null)} 
+      />
     )
   }
 
