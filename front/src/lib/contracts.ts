@@ -6,8 +6,9 @@ export const CONTRACT_ADDRESSES = {
   BOND_FACTORY: '0xC35A017D122BfD160e3A60f0c2E5b58EbBDDcf6C' as Address, // Replace with deployed Bond Factory address
 } as const
 
-// Bond Factory ABI - updated to match the actual contract
+// Bond Factory ABI - comprehensive functions from bnfc.sol
 export const BOND_FACTORY_ABI = [
+  // Bond Creation
   {
     "type": "function",
     "name": "createBond",
@@ -37,6 +38,33 @@ export const BOND_FACTORY_ABI = [
     ],
     "stateMutability": "nonpayable"
   },
+  
+  // Bond Redemption
+  {
+    "type": "function",
+    "name": "redeemBond",
+    "inputs": [{ "name": "bondId", "type": "uint256" }],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  
+  // Defragmentalization
+  {
+    "type": "function",
+    "name": "defragmentalizeBond",
+    "inputs": [{ "name": "bondId", "type": "uint256" }],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  
+  // View Functions
+  {
+    "type": "function",
+    "name": "getUserBonds",
+    "inputs": [{ "name": "user", "type": "address" }],
+    "outputs": [{ "name": "", "type": "uint256[]" }],
+    "stateMutability": "view"
+  },
   {
     "type": "function",
     "name": "getBondInfo",
@@ -60,13 +88,6 @@ export const BOND_FACTORY_ABI = [
       { "name": "bondNumber", "type": "string" },
       { "name": "totalAssets", "type": "uint256" }
     ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "getUserBonds",
-    "inputs": [{ "name": "user", "type": "address" }],
-    "outputs": [{ "name": "", "type": "uint256[]" }],
     "stateMutability": "view"
   },
   {
@@ -110,14 +131,136 @@ export const BOND_FACTORY_ABI = [
     "stateMutability": "view"
   },
   {
+    "type": "function",
+    "name": "canDefragmentalize",
+    "inputs": [{ "name": "bondId", "type": "uint256" }],
+    "outputs": [
+      { "name": "canDefrag", "type": "bool" },
+      { "name": "reason", "type": "string" }
+    ],
+    "stateMutability": "view"
+  },
+  
+  // Events
+  {
     "type": "event",
     "name": "BondCreated",
     "inputs": [
       { "name": "bondId", "type": "uint256", "indexed": true },
       { "name": "creator", "type": "address", "indexed": true },
       { "name": "bondNFTAddress", "type": "address", "indexed": false },
+      { "name": "bondName", "type": "string", "indexed": false },
+      { "name": "description", "type": "string", "indexed": false },
       { "name": "assets", "type": "tuple[]", "indexed": false },
       { "name": "timestamp", "type": "uint256", "indexed": false }
+    ]
+  },
+  {
+    "type": "event",
+    "name": "BondRedeemed",
+    "inputs": [
+      { "name": "bondId", "type": "uint256", "indexed": true },
+      { "name": "creator", "type": "address", "indexed": true },
+      { "name": "timestamp", "type": "uint256", "indexed": false }
+    ]
+  },
+  {
+    "type": "event",
+    "name": "BondDefragmentalized",
+    "inputs": [
+      { "name": "bondId", "type": "uint256", "indexed": true },
+      { "name": "creator", "type": "address", "indexed": true },
+      { "name": "timestamp", "type": "uint256", "indexed": false }
+    ]
+  }
+] as const
+
+// BondNFT ABI - functions from bn.sol
+export const BOND_NFT_ABI = [
+  // Bond Redemption
+  {
+    "type": "function",
+    "name": "claimMyNFTs",
+    "inputs": [],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "redeemMyTokens",
+    "inputs": [{ "name": "tokenAmount", "type": "uint256" }],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "defragmentalize",
+    "inputs": [],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  
+  // View Functions
+  {
+    "type": "function",
+    "name": "getBondData",
+    "inputs": [],
+    "outputs": [
+      { "name": "totalSupply", "type": "uint256" },
+      { "name": "tokensReturned", "type": "uint256" },
+      { "name": "feeVault", "type": "uint256" },
+      { "name": "isFragmentalized", "type": "bool" },
+      { "name": "creator", "type": "address" },
+      { "name": "createdAt", "type": "uint256" }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "getOutstandingTokens",
+    "inputs": [],
+    "outputs": [{ "name": "", "type": "uint256" }],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "getVaultValue",
+    "inputs": [],
+    "outputs": [{ "name": "", "type": "uint256" }],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "isFullyRedeemed",
+    "inputs": [],
+    "outputs": [{ "name": "", "type": "bool" }],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "getRedemptionValue",
+    "inputs": [{ "name": "tokenAmount", "type": "uint256" }],
+    "outputs": [{ "name": "", "type": "uint256" }],
+    "stateMutability": "view"
+  },
+  
+  // Events
+  {
+    "type": "event",
+    "name": "NFTsClaimed",
+    "inputs": [
+      { "name": "bondId", "type": "uint256", "indexed": true },
+      { "name": "owner", "type": "address", "indexed": true }
+    ]
+  },
+  {
+    "type": "event",
+    "name": "TokensRedeemed",
+    "inputs": [
+      { "name": "bondId", "type": "uint256", "indexed": true },
+      { "name": "user", "type": "address", "indexed": true },
+      { "name": "tokenAmount", "type": "uint256", "indexed": false },
+      { "name": "ethAmount", "type": "uint256", "indexed": false }
     ]
   }
 ] as const
@@ -161,4 +304,4 @@ export const ERC721_ABI = [
     "outputs": [{ "name": "", "type": "address" }],
     "stateMutability": "view"
   }
-] as const 
+] as const

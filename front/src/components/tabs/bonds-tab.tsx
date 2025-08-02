@@ -3,6 +3,7 @@
 import { useState } from 'react'
 import { Package, RefreshCw, ExternalLink, Calendar, Coins, AlertCircle, CheckCircle, Clock } from 'lucide-react'
 import { useBonds, Bond } from '../../hooks/useBonds'
+import { useBondRedemption } from '../../hooks/useBondRedemption'
 
 interface BondsTabProps {
   onBondRedeemed?: () => void
@@ -13,6 +14,7 @@ export function BondsTab({ onBondRedeemed }: BondsTabProps) {
   const [sortBy, setSortBy] = useState<'name' | 'createdAt' | 'assetCount'>('createdAt')
   
   const { bonds, isBondsLoading, refetchBonds } = useBonds()
+  const { redeemBond, isRedeeming, isSuccess, error: redeemError, txHash } = useBondRedemption()
 
   const filteredBonds = bonds.filter(bond => {
     const matchesSearch = bond.bondName.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -34,6 +36,17 @@ export function BondsTab({ onBondRedeemed }: BondsTabProps) {
   })
 
   const handleRefresh = () => {
+    refetchBonds()
+  }
+
+  // Handler for redeem button
+  const handleRedeem = async (bond: Bond) => {
+    await redeemBond({
+      bondId: bond.bondId,
+      bondNFTContract: bond.bondNFTContract,
+      isFractionalized: false // TODO: add logic to detect if bond is fractionalized
+    })
+    if (onBondRedeemed) onBondRedeemed()
     refetchBonds()
   }
 
@@ -178,12 +191,16 @@ export function BondsTab({ onBondRedeemed }: BondsTabProps) {
                 {!bond.isRedeemed && (
                   <button
                     className="px-3 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50"
-                    disabled={bond.error}
+                    disabled={bond.error || isRedeeming}
+                    onClick={() => handleRedeem(bond)}
                   >
-                    Redeem
+                    {isRedeeming ? 'Redeeming...' : 'Redeem'}
                   </button>
                 )}
               </div>
+              {redeemError && (
+                <div className="mt-2 text-xs text-red-600">{redeemError}</div>
+              )}
             </div>
           ))}
         </div>
