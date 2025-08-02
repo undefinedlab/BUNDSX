@@ -3,9 +3,9 @@ import { Address } from 'viem'
 // Contract addresses - Update these after deployment on Base
 export const CONTRACT_ADDRESSES = {
   // These will be updated with actual deployed addresses on Base
-  BOND_FACTORY: '0xC35A017D122BfD160e3A60f0c2E5b58EbBDDcf6C' as Address, // Replace with deployed Bond Factory address
-  CURVE_AMM: '0x4610cBf759FFC0557466B052605AdBEBDab0D1C8' as Address, // Replace with deployed CurveAMM address
-  BOND_TOKEN_FACTORY: '0x4504755bB283c739CeC366A715c006b890a8358c' as Address, // Replace with deployed BondTokenFactory address
+  BOND_FACTORY: '0x301957e16A43C33Fd3330E69B06E4B53f360b0F9' as Address, // Replace with deployed Bond Factory address
+  CURVE_AMM: '0xe7e4325Be5bE18897d4a5a3B7eCDf4809676FeA9' as Address, // Replace with deployed CurveAMM address
+  BOND_TOKEN_FACTORY: '0x224aB7D4d491362c4b1B741Eb4edC975b76c75b0' as Address, // Replace with deployed BondTokenFactory address
 } as const
 
 // Bond Factory ABI - comprehensive functions from bnfc.sol
@@ -269,142 +269,212 @@ export const BOND_NFT_ABI = [
 
 // CurveAMM ABI - functions from crv.sol
 export const CURVE_AMM_ABI = [
-  // Market Creation
-  {
-    "type": "function",
-    "name": "createMarket",
-    "inputs": [
-      { "name": "bondId", "type": "uint256" },
-      { "name": "totalSupply", "type": "uint256" },
-      { "name": "tokensForSale", "type": "uint256" }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
+    {
+      "type": "function",
+      "name": "createMarket",
+      "inputs": [
+        { "name": "bondId", "type": "uint256" },
+        { "name": "totalSupply", "type": "uint256" },
+        { "name": "tokensForSale", "type": "uint256" }
+      ],
+      "outputs": [],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function",
+      "name": "initializeBondTokenFactory",
+      "inputs": [],
+      "outputs": [],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function",
+      "name": "emergencyWithdrawETH",
+      "inputs": [],
+      "outputs": [],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function",
+      "name": "getStats",
+      "inputs": [],
+      "outputs": [
+        { "name": "_totalMarketsCreated", "type": "uint256" },
+        { "name": "_totalVolumeETH", "type": "uint256" },
+        { "name": "_totalFeesCollected", "type": "uint256" }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "getMarketInfo",
+      "inputs": [
+        { "name": "bondId", "type": "uint256" }
+      ],
+      "outputs": [
+        { "name": "totalSupply", "type": "uint256" },
+        { "name": "tokensForSale", "type": "uint256" },
+        { "name": "tokensSold", "type": "uint256" },
+        { "name": "ethReserve", "type": "uint256" },
+        { "name": "currentPrice", "type": "uint256" },
+        { "name": "isActive", "type": "bool" },
+        { "name": "creator", "type": "address" },
+        { "name": "createdAt", "type": "uint256" }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "marketExists",
+      "inputs": [
+        { "name": "bondId", "type": "uint256" }
+      ],
+      "outputs": [
+        { "name": "", "type": "bool" }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "buyTokens",
+      "inputs": [
+        { "name": "bondId", "type": "uint256" },
+        { "name": "minTokensOut", "type": "uint256" }
+      ],
+      "outputs": [],
+      "stateMutability": "payable"
+    },
+    {
+      "type": "function",
+      "name": "sellTokens",
+      "inputs": [
+        { "name": "bondId", "type": "uint256" },
+        { "name": "tokenAmount", "type": "uint256" }
+      ],
+      "outputs": [],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function",
+      "name": "getTokenBalance",
+      "inputs": [
+        { "name": "bondId", "type": "uint256" },
+        { "name": "user", "type": "address" }
+      ],
+      "outputs": [
+        { "name": "", "type": "uint256" }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "getBondTokenContract",
+      "inputs": [
+        { "name": "bondId", "type": "uint256" }
+      ],
+      "outputs": [
+        { "name": "", "type": "address" }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "emergencyPauseMarket",
+      "inputs": [
+        { "name": "bondId", "type": "uint256" }
+      ],
+      "outputs": [],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function",
+      "name": "emergencyUnpauseMarket",
+      "inputs": [
+        { "name": "bondId", "type": "uint256" }
+      ],
+      "outputs": [],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function",
+      "name": "closeMarketByFactory",
+      "inputs": [
+        { "name": "bondId", "type": "uint256" }
+      ],
+      "outputs": [],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function",
+      "name": "previewBuyCost",
+      "inputs": [
+        { "name": "bondId", "type": "uint256" },
+        { "name": "tokenAmount", "type": "uint256" }
+      ],
+      "outputs": [
+        { "name": "totalCost", "type": "uint256" },
+        { "name": "feeAmount", "type": "uint256" }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "previewSellRefund",
+      "inputs": [
+        { "name": "bondId", "type": "uint256" },
+        { "name": "tokenAmount", "type": "uint256" }
+      ],
+      "outputs": [
+        { "name": "totalRefund", "type": "uint256" },
+        { "name": "feeAmount", "type": "uint256" },
+        { "name": "userReceives", "type": "uint256" }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "getTokenPrice",
+      "inputs": [
+        { "name": "tokenNumber", "type": "uint256" }
+      ],
+      "outputs": [
+        { "name": "", "type": "uint256" }
+      ],
+      "stateMutability": "pure"
+    },
+    {
+      "type": "function",
+      "name": "getContractBalance",
+      "inputs": [],
+      "outputs": [
+        { "name": "", "type": "uint256" }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "tokenNumberToWei",
+      "inputs": [
+        { "name": "tokenNumber", "type": "uint256" }
+      ],
+      "outputs": [
+        { "name": "", "type": "uint256" }
+      ],
+      "stateMutability": "pure"
+    },
+    {
+      "type": "function",
+      "name": "weiToTokenNumber",
+      "inputs": [
+        { "name": "weiAmount", "type": "uint256" }
+      ],
+      "outputs": [
+        { "name": "", "type": "uint256" }
+      ],
+      "stateMutability": "pure"
+    }
+  ] as const
   
-  // Trading Functions
-  {
-    "type": "function",
-    "name": "buyTokens",
-    "inputs": [
-      { "name": "bondId", "type": "uint256" },
-      { "name": "tokenAmount", "type": "uint256" }
-    ],
-    "outputs": [],
-    "stateMutability": "payable"
-  },
-  {
-    "type": "function",
-    "name": "sellTokens",
-    "inputs": [
-      { "name": "bondId", "type": "uint256" },
-      { "name": "tokenAmount", "type": "uint256" }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  
-  // Market Management
-  {
-    "type": "function",
-    "name": "marketExists",
-    "inputs": [{ "name": "bondId", "type": "uint256" }],
-    "outputs": [{ "name": "", "type": "bool" }],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "closeMarketByFactory",
-    "inputs": [{ "name": "bondId", "type": "uint256" }],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  
-  // View Functions
-  {
-    "type": "function",
-    "name": "getMarketInfo",
-    "inputs": [{ "name": "bondId", "type": "uint256" }],
-    "outputs": [
-      { "name": "totalSupply", "type": "uint256" },
-      { "name": "tokensForSale", "type": "uint256" },
-      { "name": "tokensSold", "type": "uint256" },
-      { "name": "ethReserve", "type": "uint256" },
-      { "name": "currentPrice", "type": "uint256" },
-      { "name": "isActive", "type": "bool" },
-      { "name": "creator", "type": "address" },
-      { "name": "createdAt", "type": "uint256" }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "getBondTokenContract",
-    "inputs": [{ "name": "bondId", "type": "uint256" }],
-    "outputs": [{ "name": "", "type": "address" }],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "getTokenBalance",
-    "inputs": [
-      { "name": "bondId", "type": "uint256" },
-      { "name": "user", "type": "address" }
-    ],
-    "outputs": [{ "name": "", "type": "uint256" }],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "previewBuyCost",
-    "inputs": [
-      { "name": "bondId", "type": "uint256" },
-      { "name": "tokenAmount", "type": "uint256" }
-    ],
-    "outputs": [
-      { "name": "totalCost", "type": "uint256" },
-      { "name": "feeAmount", "type": "uint256" }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "previewSellRefund",
-    "inputs": [
-      { "name": "bondId", "type": "uint256" },
-      { "name": "tokenAmount", "type": "uint256" }
-    ],
-    "outputs": [
-      { "name": "totalRefund", "type": "uint256" },
-      { "name": "feeAmount", "type": "uint256" },
-      { "name": "userReceives", "type": "uint256" }
-    ],
-    "stateMutability": "view"
-  },
-  
-  // Events
-  {
-    "type": "event",
-    "name": "MarketCreated",
-    "inputs": [
-      { "name": "bondId", "type": "uint256", "indexed": true },
-      { "name": "creator", "type": "address", "indexed": true },
-      { "name": "tokenContract", "type": "address", "indexed": false },
-      { "name": "totalSupply", "type": "uint256", "indexed": false },
-      { "name": "tokensForSale", "type": "uint256", "indexed": false },
-      { "name": "timestamp", "type": "uint256", "indexed": false }
-    ]
-  },
-  {
-    "type": "event",
-    "name": "MarketClosed",
-    "inputs": [
-      { "name": "bondId", "type": "uint256", "indexed": true },
-      { "name": "closer", "type": "address", "indexed": true },
-      { "name": "timestamp", "type": "uint256", "indexed": false }
-    ]
-  }
-] as const
 
 // ERC721 ABI for NFT approvals
 export const ERC721_ABI = [
