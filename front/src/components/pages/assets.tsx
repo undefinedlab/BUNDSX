@@ -2,7 +2,9 @@
 
 import { useState, useEffect } from 'react'
 import { useAccount } from 'wagmi'
-import { Coins, Wallet, Package, DollarSign, TrendingUp } from 'lucide-react'
+import { Coins, Wallet, Package, DollarSign, TrendingUp, ExternalLink } from 'lucide-react'
+import { NFTsTab } from '../tabs/nfts-tab'
+import { useNFTs } from '../../hooks/useNFTs'
 
 interface NFT {
   id: string
@@ -30,27 +32,15 @@ export function Assets({ selectedNFTs, onSelectedNFTsChange }: AssetsProps) {
   const [isMounted, setIsMounted] = useState(false)
   const [isLoading, setIsLoading] = useState(false)
 
-  // Mock data for demonstration
-  const stats = {
-    totalNFTs: 12,
-    totalBonds: 3,
-    totalHighestBids: 2.456
-  }
+  // Use the NFT hook to get real data
+  const { nfts, stats: nftStats, isLoading: nftLoading, error: nftError } = useNFTs()
 
-  const mockNFTs: NFT[] = [
-    {
-      id: '1',
-      name: 'Bored Ape #1234',
-      image: 'https://via.placeholder.com/300x300/6366f1/ffffff?text=APE',
-      collection: 'Bored Ape Yacht Club',
-      floorPrice: 15.5,
-      chain: 'ethereum',
-      tokenId: '1234',
-      contractAddress: '0x123...',
-      maxOffer: '12.5',
-      maxOfferBidder: '0xabc...'
-    }
-  ]
+  // Calculate stats from actual NFT data
+  const stats = {
+    totalNFTs: nfts.length,
+    totalBonds: 3, // Mock for now
+    totalHighestBids: nfts.reduce((sum, nft) => sum + (nft.maxOffer ? parseFloat(nft.maxOffer) : 0), 0)
+  }
 
   const mockBonds = [
     {
@@ -76,6 +66,11 @@ export function Assets({ selectedNFTs, onSelectedNFTsChange }: AssetsProps) {
     } else {
       onSelectedNFTsChange([...selectedNFTs, nft])
     }
+  }
+
+  const handleBondCreated = () => {
+    // Mock bond creation success
+    alert('Bond created successfully!')
   }
 
   if (!isMounted) {
@@ -181,42 +176,15 @@ export function Assets({ selectedNFTs, onSelectedNFTsChange }: AssetsProps) {
         <div className="p-6">
           {/* NFTs Tab */}
           {activeTab === 'nfts' && (
-            <div className="space-y-4">
-              <div className="flex justify-between items-center">
-                <h3 className="text-lg font-semibold text-gray-800">Your NFT Collection</h3>
-                <button className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors">
-                  Create Bond
-                </button>
-              </div>
-              
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                {mockNFTs.map((nft) => (
-                  <div
-                    key={nft.id}
-                    className={`border rounded-xl p-4 cursor-pointer transition-all ${
-                      selectedNFTs.some(selected => selected.id === nft.id)
-                        ? 'border-blue-500 bg-blue-50'
-                        : 'border-gray-200 hover:border-gray-300'
-                    }`}
-                    onClick={() => toggleNFTSelection(nft)}
-                  >
-                    <img
-                      src={nft.image}
-                      alt={nft.name}
-                      className="w-full h-48 object-cover rounded-lg mb-3"
-                    />
-                    <h4 className="font-semibold text-gray-800 mb-1">{nft.name}</h4>
-                    <p className="text-sm text-gray-600 mb-2">{nft.collection}</p>
-                    <div className="flex justify-between items-center">
-                      <span className="text-sm text-gray-600">Floor: {nft.floorPrice} ETH</span>
-                      {nft.maxOffer && (
-                        <span className="text-sm text-green-600">Bid: {nft.maxOffer} ETH</span>
-                      )}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
+            <NFTsTab
+              nfts={nfts}
+              selectedNFTs={selectedNFTs}
+              isLoading={nftLoading}
+              error={nftError}
+              onToggleNFTSelection={toggleNFTSelection}
+              onSelectedNFTsChange={onSelectedNFTsChange}
+              onBondCreated={handleBondCreated}
+            />
           )}
 
           {/* Bonds Tab */}
