@@ -72,19 +72,6 @@ contract BondFactory is ReentrancyGuard, Ownable {
         string description;
     }
     
-    // Struct for createBond local variables
-    struct CreateBondVars {
-        uint256 bondId;
-        address bondNFTAddress;
-        string bondNumber;
-    }
-    
-    // Struct for redemption operations
-    struct RedemptionVars {
-        BondData bond;
-        bool isFragmentalized;
-    }
-    
     // State variables
     mapping(uint256 => BondData) public bonds;
     mapping(address => uint256[]) public userBonds;     // User -> bondIds[]
@@ -139,23 +126,22 @@ contract BondFactory is ReentrancyGuard, Ownable {
         // Validate ownership and availability
         _validateAssetOwnership(params.assets, msg.sender);
         
-        CreateBondVars memory vars;
-        vars.bondId = nextBondId++;
+        uint256 newBondId = nextBondId++;
         
         // Transfer NFTs to factory
         _transferAssetsToFactory(params.assets, msg.sender);
         
         // Deploy BondNFT clone
-        vars.bondNFTAddress = _deployBondNFT(vars.bondId, msg.sender);
+        bondNFTAddress = _deployBondNFT(newBondId, msg.sender);
         
         // Generate bond collection number (001, 002, etc.)
-        vars.bondNumber = _formatBondNumber(totalBondsCreated + 1);
+        string memory bondNumber = _formatBondNumber(totalBondsCreated + 1);
         
         // Store bond data
-        _storeBondData(vars.bondId, vars.bondNFTAddress, params, vars.bondNumber);
+        _storeBondData(newBondId, bondNFTAddress, params, bondNumber);
         
         // Update user bonds tracking
-        userBonds[msg.sender].push(vars.bondId);
+        userBonds[msg.sender].push(newBondId);
         
         // Update stats
         totalBondsCreated++;
@@ -163,12 +149,12 @@ contract BondFactory is ReentrancyGuard, Ownable {
         
         // Set CurveAMM in BondNFT if available
         if (curveAMM != address(0)) {
-            IBondNFT(vars.bondNFTAddress).setCurveAMM(curveAMM);
+            IBondNFT(bondNFTAddress).setCurveAMM(curveAMM);
         }
         
-        emit BondCreated(vars.bondId, msg.sender, vars.bondNFTAddress, params.bondName, params.description, params.assets, block.timestamp);
+        emit BondCreated(newBondId, msg.sender, bondNFTAddress, params.bondName, params.description, params.assets, block.timestamp);
         
-        return (vars.bondId, vars.bondNFTAddress);
+        return (newBondId, bondNFTAddress);
     }
     
     /**
@@ -226,25 +212,6 @@ contract BondFactory is ReentrancyGuard, Ownable {
         _validateRelease(bondId, recipient);
         _transferAssetsToRecipient(bondId, recipient);
         _finalizeRelease(bondId, recipient);
-    }
-    
-    /**
-     * @dev Generate simplified asset summary for description
-     * @param assets Array of NFT assets
-     * @return summary String describing the assets
-     */
-    function generateAssetSummary(NFTAsset[] calldata assets) 
-        external 
-        pure 
-        returns (string memory summary) 
-    {
-        if (assets.length == 0) return "No assets";
-        
-        return string(abi.encodePacked(
-            "NFT Bond with ",
-            _toString(assets.length),
-            " assets"
-        ));
     }
     
     // Internal functions to avoid stack too deep
@@ -536,31 +503,6 @@ contract BondFactory is ReentrancyGuard, Ownable {
         return string(buffer);
     }
     
-    /**
-     * @dev Convert address to string (first 6 and last 4 chars)
-     */
-    function _addressToString(address addr) private pure returns (string memory) {
-        bytes memory data = abi.encodePacked(addr);
-        bytes memory alphabet = "0123456789abcdef";
-        
-        bytes memory str = new bytes(10); // 0x + 4 chars + ... + 4 chars
-        str[0] = '0';
-        str[1] = 'x';
-        
-        // First 4 chars (2 bytes)
-        for (uint i = 0; i < 2; i++) {
-            str[2 + i * 2] = alphabet[uint(uint8(data[i]) >> 4)];
-            str[3 + i * 2] = alphabet[uint(uint8(data[i]) & 0x0f)];
-        }
-        
-        str[6] = '.';
-        str[7] = '.';
-        str[8] = '.';
-        str[9] = '.';
-        
-        return string(str);
-    }
-    
     // View functions
     function getBondAssets(uint256 bondId) 
         external 
@@ -685,34 +627,7 @@ contract BondFactory is ReentrancyGuard, Ownable {
         return (true, "Can be defragmentalized");
     }
     
-    function predictBondNFTAddress(uint256 bondId, address creator, uint256 timestamp) 
-        external 
-        view 
-        returns (address) 
-    {
-        bytes32 salt = keccak256(abi.encodePacked(bondId, creator, timestamp));
-        return Clones.predictDeterministicAddress(bondNFTImplementation, salt);
-    }
-    
     // Emergency functions (owner only)
-    function emergencyWithdrawNFT(
-        address nftContract, 
-        uint256 tokenId, 
-        bool isERC1155, 
-        uint256 amount
-    ) external onlyOwner {
-        require(!assetLocked[nftContract][tokenId], "Asset is locked in bond");
-        
-        NFTAsset memory asset = NFTAsset({
-            contractAddress: nftContract,
-            tokenId: tokenId,
-            amount: amount,
-            isERC1155: isERC1155
-        });
-        
-        _transferSingleAsset(asset, owner());
-    }
-    
     function emergencySetCurveAMM(uint256 bondId, address _curveAMM) 
         external 
         onlyOwner 
@@ -772,17 +687,4 @@ interface IBondNFT {
 }
 
 // Enhanced ICurveAMM interface for defragmentalization support
-interface ICurveAMM {
-    function marketExists(uint256 bondId) external view returns (bool);
-    function getMarketInfo(uint256 bondId) external view returns (
-        uint256 totalSupply,
-        uint256 tokensForSale,
-        uint256 tokensSold,
-        uint256 ethReserve,
-        uint256 currentPrice,
-        bool isActive,
-        address creator,
-        uint256 createdAt
-    );
-    function closeMarketByFactory(uint256 bondId) external;
-}
+// Note: ICurveAMM interface is already defined in bn.sol

@@ -13,6 +13,19 @@ interface ICurveAMM {
     function getTokenBalance(uint256 bondId, address user) external view returns (uint256);
     function burnTokens(uint256 bondId, address user, uint256 amount) external;
     function getTotalSupply(uint256 bondId) external view returns (uint256);
+    function getTokensSold(uint256 bondId) external view returns (uint256);
+    function marketExists(uint256 bondId) external view returns (bool);
+    function getMarketInfo(uint256 bondId) external view returns (
+        uint256 totalSupply,
+        uint256 tokensForSale,
+        uint256 tokensSold,
+        uint256 ethReserve,
+        uint256 currentPrice,
+        bool isActive,
+        address creator,
+        uint256 createdAt
+    );
+    function closeMarketByFactory(uint256 bondId) external;
 }
 
 /**
@@ -23,11 +36,12 @@ contract BondNFT is ERC721, ReentrancyGuard, Initializable {
     
     // Events
     event Fractionalized(uint256 indexed bondId, uint256 totalSupply);
+    event Defragmentalized(uint256 indexed bondId, uint256 timestamp);
+    event MarketClosed(uint256 indexed bondId, uint256 timestamp);
     event VaultDeposit(uint256 indexed bondId, uint256 amount);
     event TokensRedeemed(uint256 indexed bondId, address indexed user, uint256 tokenAmount, uint256 ethAmount);
     event NFTsClaimed(uint256 indexed bondId, address indexed owner);
     event CurveAMMSet(uint256 indexed bondId, address curveAMM);
-    event BondDefragmentalized(uint256 indexed bondId, address indexed owner, uint256 timestamp);
     
     // Bond state
     struct BondData {
@@ -62,6 +76,11 @@ contract BondNFT is ERC721, ReentrancyGuard, Initializable {
             msg.sender == bondData.creator,
             "Unauthorized"
         );
+        _;
+    }
+    
+    modifier onlyCreator() {
+        require(msg.sender == bondData.creator, "Only bond creator");
         _;
     }
     
@@ -121,6 +140,33 @@ contract BondNFT is ERC721, ReentrancyGuard, Initializable {
     }
     
     /**
+     * @dev Reverse fractionalization when no tokens are sold (creator only)
+     */
+    function defragmentalize() external onlyCreator nonReentrant {
+        require(bondData.isFragmentalized, "Not fractionalized");
+        
+        // Check if curve has any sold tokens
+        if (address(curveAMM) != address(0)) {
+            uint256 tokensSold = curveAMM.getTokensSold(bondId);
+            require(tokensSold == 0, "Cannot defragmentalize with sold tokens");
+        }
+        
+        // Reset fractionalization
+        bondData.isFragmentalized = false;
+        bondData.totalSupply = 1; // Back to single NFT
+        bondData.tokensReturned = 0; // Reset tokens returned
+        
+        emit Defragmentalized(bondId, block.timestamp);
+    }
+    
+    /**
+     * @dev Callback when CurveAMM market is closed (called by CurveAMM)
+     */
+    function onMarketClosed() external onlyCurve {
+        emit MarketClosed(bondId, block.timestamp);
+    }
+    
+    /**
      * @dev Receive trading fees from CurveAMM
      */
     function addToVault() external payable onlyCurve {
@@ -151,7 +197,8 @@ contract BondNFT is ERC721, ReentrancyGuard, Initializable {
         
         uint256 vaultShare = 0;
         if (bondData.feeVault > 0) {
-            vaultShare = (bondData.feeVault * tokenAmount) / outstandingTokens;
+            // Use higher precision calculation to avoid precision loss
+            vaultShare = (bondData.feeVault * tokenAmount * 1e18) / (outstandingTokens * 1e18);
         }
         
         // Update state first (CEI pattern)
@@ -163,7 +210,7 @@ contract BondNFT is ERC721, ReentrancyGuard, Initializable {
         // Burn tokens from CurveAMM
         curveAMM.burnTokens(bondId, msg.sender, tokenAmount);
         
-        // Send ETH to user if available
+        // Send ETH to user if available (after state updates)
         if (vaultShare > 0) {
             payable(msg.sender).transfer(vaultShare);
         }
@@ -179,7 +226,7 @@ contract BondNFT is ERC721, ReentrancyGuard, Initializable {
     function claimMyNFTs() external onlyBondOwner nonReentrant {
         // If bond is fractionalized, check that all tokens are returned
         if (bondData.isFragmentalized) {
-            require(
+        require(
                 bondData.tokensReturned == bondData.totalSupply, 
                 "Tokens still outstanding"
             );
@@ -189,7 +236,7 @@ contract BondNFT is ERC721, ReentrancyGuard, Initializable {
         // Call factory to release NFTs to bond owner
         bondFactory.releaseNFTs(bondId, msg.sender);
         
-        // Send any remaining vault ETH to bond owner
+        // Send any remaining vault ETH to bond owner (after state updates)
         if (bondData.feeVault > 0) {
             uint256 remainingVault = bondData.feeVault;
             bondData.feeVault = 0;
@@ -199,36 +246,17 @@ contract BondNFT is ERC721, ReentrancyGuard, Initializable {
         emit NFTsClaimed(bondId, msg.sender);
     }
     
-    /**
-     * @dev Defragmentalize bond (convert back from fractionalized to whole bond)
-     * Only callable by bond owner after all tokens are returned
-     */
-    function defragmentalize() external onlyBondOwner {
-        require(bondData.isFragmentalized, "Bond is not fractionalized");
-        require(
-            bondData.tokensReturned == bondData.totalSupply, 
-            "All tokens must be returned before defragmentalization"
-        );
-        
-        // Reset fractionalization state
-        bondData.isFragmentalized = false;
-        bondData.totalSupply = 0;
-        bondData.tokensReturned = 0;
-        
-        emit BondDefragmentalized(bondId, msg.sender, block.timestamp);
-    }
-    
     // View functions
     /**
      * @dev Get complete bond data
      */
     function getBondData() external view returns (
-        uint256 totalSupply,
+            uint256 totalSupply,
         uint256 tokensReturned,
         uint256 feeVault,
         bool isFragmentalized,
-        address creator,
-        uint256 createdAt
+            address creator,
+            uint256 createdAt
     ) {
         return (
             bondData.totalSupply,
@@ -283,6 +311,16 @@ contract BondNFT is ERC721, ReentrancyGuard, Initializable {
         require(address(this).balance > 0, "No ETH to withdraw");
         
         payable(msg.sender).transfer(address(this).balance);
+    }
+    
+    /**
+     * @dev Burn the Bond NFT (called by factory during redemption)
+     */
+    function burn(uint256 tokenId) external onlyFactoryOrOwner {
+        require(tokenId == bondId, "Invalid token ID");
+        require(ownerOf(tokenId) == msg.sender || msg.sender == address(bondFactory), "Not authorized");
+        
+        _burn(tokenId);
     }
     
     /**

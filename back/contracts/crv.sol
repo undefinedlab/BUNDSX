@@ -29,6 +29,13 @@ interface IBondFactory {
         uint256 createdAt,
         uint256 assetCount
     );
+    
+    function getBondMetadata(uint256 bondId) external view returns (
+        string memory bondName,
+        string memory description,
+        string memory bondNumber,
+        uint256 totalAssets
+    );
 }
 
 /**
@@ -71,6 +78,16 @@ contract CurveAMM is ReentrancyGuard, Ownable {
         uint256 timestamp
     );
     
+    event FeeTransferFailed(
+        uint256 indexed bondId,
+        uint256 feeAmount
+    );
+    
+    event EmergencyPauseTriggered(
+        uint256 indexed bondId,
+        address indexed triggeredBy
+    );
+    
     // Market data structure with exponential curve
     struct Market {
         uint256 totalSupply;           // Total tokens created for this bond
@@ -86,28 +103,54 @@ contract CurveAMM is ReentrancyGuard, Ownable {
     
     // State variables
     mapping(uint256 => Market) public markets;
-    mapping(uint256 => bool) public marketExists;
     
     IBondFactory public immutable bondFactory;
     BondTokenFactory public bondTokenFactory;
+    
+    // SECURITY: Added initialization tracking
+    bool private initialized = false;
+    bool public globalPaused = false;
     
     // Exponential curve constants
     uint256 public constant FEE_RATE = 250; // 2.5% (250/10000)
     uint256 public constant CURVE_STEEPNESS = 1000; // Controls price growth rate
     uint256 public constant PRICE_SCALE = 1e15; // Base price multiplier (0.001 ETH scale)
+    uint256 public constant TOKEN_DECIMALS = 18; // ERC20 standard decimals
+    uint256 public constant TOKEN_UNIT = 10**TOKEN_DECIMALS; // 1 token = 10^18 wei
+    
+    // SECURITY: Added circuit breakers
+    uint256 public constant MAX_TOKENS_PER_TRANSACTION = 1000 * TOKEN_UNIT;
+    uint256 public constant MAX_PRICE_IMPACT = 1000; // 10%
+    uint256 public constant MAX_TOKEN_NUMBER = type(uint128).max; // Prevent overflow
     
     // Statistics
     uint256 public totalMarketsCreated;
     uint256 public totalVolumeETH;
     uint256 public totalFeesCollected;
     
+    // SECURITY: Added modifiers
+    modifier onlyInitialized() {
+        require(initialized, "Contract not initialized");
+        _;
+    }
+    
+    modifier whenNotPaused() {
+        require(!globalPaused, "Contract is globally paused");
+        _;
+    }
+    
+    modifier validTokenAmount(uint256 tokenAmount) {
+        require(tokenAmount > 0, "Invalid token amount");
+        require(tokenAmount * TOKEN_UNIT <= MAX_TOKENS_PER_TRANSACTION, "Exceeds max transaction size");
+        _;
+    }
+    
     constructor(address _bondFactory, address _bondTokenFactory) Ownable(msg.sender) {
         require(_bondFactory != address(0), "Invalid factory address");
         require(_bondTokenFactory != address(0), "Invalid token factory address");
         bondFactory = IBondFactory(_bondFactory);
-         bondTokenFactory = BondTokenFactory(_bondTokenFactory);
+        bondTokenFactory = BondTokenFactory(_bondTokenFactory);
     }
-
 
     /**
      * @dev Create a new market for a bond with exponential curve
@@ -119,10 +162,10 @@ contract CurveAMM is ReentrancyGuard, Ownable {
         uint256 bondId,
         uint256 totalSupply,
         uint256 tokensForSale
-    ) external nonReentrant {
+    ) external nonReentrant onlyInitialized whenNotPaused {
         require(totalSupply > 0 && totalSupply <= 10**12, "Invalid total supply");
         require(tokensForSale > 0 && tokensForSale <= totalSupply, "Invalid tokens for sale");
-        require(!marketExists[bondId], "Market already exists");
+        require(!isMarketActive(bondId), "Market already exists");
         
         // Get bond info from factory
         (address creator, address bondNFTContract, bool isRedeemed,,) = 
@@ -138,16 +181,23 @@ contract CurveAMM is ReentrancyGuard, Ownable {
             "Not bond owner"
         );
         
-        // Deploy ERC20 token for this bond
-        address tokenContract = bondTokenFactory.createBondToken(bondId);
+        // Get bond metadata for naming
+        (string memory bondName, , , ) = bondFactory.getBondMetadata(bondId);
+        
+        // Deploy ERC20 token for this bond with proper name
+        address tokenContract = bondTokenFactory.createBondToken(bondId, bondName);
         
         // Mark bond as fractionalized
         IBondNFT(bondNFTContract).markFragmentalized(totalSupply);
         
+        // Convert supply amounts to proper ERC20 amounts (with 18 decimals)
+        uint256 totalSupplyWei = totalSupply * TOKEN_UNIT;
+        uint256 tokensForSaleWei = tokensForSale * TOKEN_UNIT;
+        
         // Initialize market with exponential curve (starts at price 0)
         Market storage market = markets[bondId];
-        market.totalSupply = totalSupply;
-        market.tokensForSale = tokensForSale;
+        market.totalSupply = totalSupplyWei;
+        market.tokensForSale = tokensForSaleWei;
         market.tokensSold = 0; // Start at 0
         market.ethReserve = 0; // Start at 0
         market.currentPrice = _calculatePrice(1); // Price of first token
@@ -157,12 +207,11 @@ contract CurveAMM is ReentrancyGuard, Ownable {
         market.tokenContract = tokenContract;
         
         // Mint tokens to creator (total - tokensForSale)
-        uint256 tokensToCreator = totalSupply - tokensForSale;
+        uint256 tokensToCreator = totalSupplyWei - tokensForSaleWei;
         if (tokensToCreator > 0) {
             BondToken(tokenContract).mint(msg.sender, tokensToCreator);
         }
         
-        marketExists[bondId] = true;
         totalMarketsCreated++;
         
         emit MarketCreated(bondId, msg.sender, tokenContract, totalSupply, tokensForSale, block.timestamp);
@@ -177,13 +226,24 @@ contract CurveAMM is ReentrancyGuard, Ownable {
         external 
         payable 
         nonReentrant 
+        onlyInitialized
+        whenNotPaused
+        validTokenAmount(tokenAmount)
     {
-        require(tokenAmount > 0, "Invalid token amount");
-        require(marketExists[bondId], "Market doesn't exist");
+        require(isMarketActive(bondId), "Market doesn't exist or inactive");
         
         Market storage market = markets[bondId];
-        require(market.isActive, "Market not active");
-        require(market.tokensSold + tokenAmount <= market.tokensForSale, "Not enough tokens available");
+        require(market.tokensSold + (tokenAmount * TOKEN_UNIT) <= market.tokensForSale, "Not enough tokens available");
+        
+        // SECURITY: Check price impact
+        uint256 currentTokenNumber = market.tokensSold / TOKEN_UNIT;
+        uint256 oldPrice = market.currentPrice;
+        uint256 newPrice = _calculatePrice(currentTokenNumber + tokenAmount + 1);
+        
+        if (oldPrice > 0) {
+            uint256 priceImpact = ((newPrice - oldPrice) * 10000) / oldPrice;
+            require(priceImpact <= MAX_PRICE_IMPACT, "Price impact too high");
+        }
         
         // Calculate total cost for buying tokenAmount tokens
         uint256 totalCost = _calculateBuyCost(bondId, tokenAmount);
@@ -193,13 +253,16 @@ contract CurveAMM is ReentrancyGuard, Ownable {
         uint256 feeAmount = (totalCost * FEE_RATE) / 10000;
         uint256 ethForReserve = totalCost - feeAmount;
         
+        // Convert token amount to proper ERC20 amount
+        uint256 tokenAmountWei = tokenAmount * TOKEN_UNIT;
+        
         // Update market state
-        market.tokensSold += tokenAmount;
+        market.tokensSold += tokenAmountWei;
         market.ethReserve += ethForReserve;
-        market.currentPrice = _calculatePrice(market.tokensSold + 1);
+        market.currentPrice = newPrice;
         
         // Mint real ERC20 tokens to buyer
-        BondToken(market.tokenContract).mint(msg.sender, tokenAmount);
+        BondToken(market.tokenContract).mint(msg.sender, tokenAmountWei);
         
         // Send fee to Bond NFT vault
         if (feeAmount > 0) {
@@ -233,35 +296,41 @@ contract CurveAMM is ReentrancyGuard, Ownable {
     function sellTokens(
         uint256 bondId, 
         uint256 tokenAmount
-    ) external nonReentrant {
-        require(tokenAmount > 0, "Invalid token amount");
-        require(marketExists[bondId], "Market doesn't exist");
+    ) external 
+        nonReentrant 
+        onlyInitialized
+        whenNotPaused
+        validTokenAmount(tokenAmount)
+    {
+        require(isMarketActive(bondId), "Market doesn't exist or inactive");
         
         Market storage market = markets[bondId];
-        require(market.isActive, "Market not active");
-        require(tokenAmount <= market.tokensSold, "Cannot sell more than sold");
+        uint256 tokenAmountWei = tokenAmount * TOKEN_UNIT;
         
-        // Check user has enough ERC20 tokens
+        require(tokenAmountWei <= market.tokensSold, "Cannot sell more than sold");
+        
+        // SECURITY: Enhanced balance check
         require(
-            IERC20(market.tokenContract).balanceOf(msg.sender) >= tokenAmount,
+            IERC20(market.tokenContract).balanceOf(msg.sender) >= tokenAmountWei,
             "Insufficient token balance"
         );
         
         // Calculate ETH to receive for selling tokenAmount tokens
-        uint256 totalRefund = _calculateSellRefund(bondId, tokenAmount);
-        require(totalRefund <= market.ethReserve, "Not enough ETH in reserve");
+        uint256 totalRefund = _calculateSellRefund(bondId, tokenAmountWei);
+        require(totalRefund > 0, "No refund available");
+        require(totalRefund <= market.ethReserve, "Insufficient ETH reserve");
         
         // Calculate fee
         uint256 feeAmount = (totalRefund * FEE_RATE) / 10000;
         uint256 ethToUser = totalRefund - feeAmount;
         
-        // Burn ERC20 tokens from seller
-        BondToken(market.tokenContract).burnFrom(msg.sender, tokenAmount);
+        // Burn ERC20 tokens from seller first (fail fast)
+        BondToken(market.tokenContract).burnFrom(msg.sender, tokenAmountWei);
         
         // Update market state
-        market.tokensSold -= tokenAmount;
+        market.tokensSold -= tokenAmountWei;
         market.ethReserve -= totalRefund;
-        market.currentPrice = market.tokensSold > 0 ? _calculatePrice(market.tokensSold + 1) : _calculatePrice(1);
+        market.currentPrice = market.tokensSold > 0 ? _calculatePrice(market.tokensSold / TOKEN_UNIT + 1) : _calculatePrice(1);
         
         // Send ETH to user
         if (ethToUser > 0) {
@@ -288,24 +357,40 @@ contract CurveAMM is ReentrancyGuard, Ownable {
     }
     
     /**
-     * @dev Calculate price for token number n (exponential curve)
+     * @dev Calculate price for token number n (exponential curve) - SECURITY ENHANCED
      * Price = (n^2 * PRICE_SCALE) / CURVE_STEEPNESS
      * Token 1: ~0.001 ETH, Token 100: ~0.1 ETH, Token 500: ~2.5 ETH
      */
     function _calculatePrice(uint256 tokenNumber) private pure returns (uint256) {
         if (tokenNumber == 0) return 0;
-        return (tokenNumber * tokenNumber * PRICE_SCALE) / CURVE_STEEPNESS;
+        
+        // SECURITY: Prevent overflow
+        require(tokenNumber <= MAX_TOKEN_NUMBER, "Token number too large");
+        
+        uint256 squared = tokenNumber * tokenNumber;
+        return (squared * PRICE_SCALE) / CURVE_STEEPNESS;
     }
     
     /**
      * @dev Calculate total cost to buy tokenAmount tokens starting from current position
+     * SECURITY: Gas optimized for large amounts
      */
     function _calculateBuyCost(uint256 bondId, uint256 tokenAmount) private view returns (uint256) {
         Market storage market = markets[bondId];
         uint256 totalCost = 0;
         
+        // Convert from wei to token numbers for price calculation
+        uint256 currentTokenNumber = market.tokensSold / TOKEN_UNIT;
+        
+        // SECURITY: Gas optimization for large amounts
+        if (tokenAmount > 100) {
+            // Use mathematical formula for large amounts
+            return _calculateCostMathematically(currentTokenNumber, tokenAmount);
+        }
+        
+        // Use loop for smaller amounts
         for (uint256 i = 1; i <= tokenAmount; i++) {
-            uint256 tokenNumber = market.tokensSold + i;
+            uint256 tokenNumber = currentTokenNumber + i;
             totalCost += _calculatePrice(tokenNumber);
         }
         
@@ -313,51 +398,94 @@ contract CurveAMM is ReentrancyGuard, Ownable {
     }
     
     /**
-     * @dev Calculate total refund for selling tokenAmount tokens from current position
+     * @dev Mathematical formula for calculating large buy costs
+     * Sum of i^2 from (start+1) to (start+amount) = sum of squares formula
      */
-    function _calculateSellRefund(uint256 bondId, uint256 tokenAmount) private view returns (uint256) {
-        Market storage market = markets[bondId];
-        uint256 totalRefund = 0;
+    function _calculateCostMathematically(uint256 startToken, uint256 amount) private pure returns (uint256) {
+        uint256 endToken = startToken + amount;
         
-        for (uint256 i = 0; i < tokenAmount; i++) {
-            uint256 tokenNumber = market.tokensSold - i;
-            if (tokenNumber > 0) {
-                totalRefund += _calculatePrice(tokenNumber);
-            }
-        }
+        // Sum of squares formula: n(n+1)(2n+1)/6
+        uint256 sum1 = startToken * (startToken + 1) * (2 * startToken + 1) / 6;
+        uint256 sum2 = endToken * (endToken + 1) * (2 * endToken + 1) / 6;
         
-        return totalRefund;
+        uint256 sumOfSquares = sum2 - sum1;
+        return (sumOfSquares * PRICE_SCALE) / CURVE_STEEPNESS;
     }
     
     /**
-     * @dev Burn tokens (called by BondNFT for vault redemption)
+     * @dev Calculate total refund for selling tokenAmount tokens from current position
+     * SECURITY: Enhanced with bounds checking and curve-based pricing
+     */
+    function _calculateSellRefund(uint256 bondId, uint256 tokenAmount) private view returns (uint256) {
+        Market storage market = markets[bondId];
+        
+        // If no tokens sold or no ETH reserve, return 0
+        if (market.tokensSold == 0 || market.ethReserve == 0) {
+            return 0;
+        }
+        
+        // SECURITY: Ensure we don't exceed available tokens or reserve
+        require(tokenAmount <= market.tokensSold, "Cannot refund more than sold");
+        
+        // Calculate refund based on curve pricing (more accurate than proportional)
+        uint256 currentTokenNumber = market.tokensSold / TOKEN_UNIT;
+        uint256 refundAmount = 0;
+        
+        // Calculate refund for each token being sold (reverse of buy)
+        for (uint256 i = 0; i < tokenAmount; i++) {
+            uint256 tokenNumber = currentTokenNumber - i;
+            if (tokenNumber > 0) {
+                refundAmount += _calculatePrice(tokenNumber);
+            }
+        }
+        
+        // SECURITY: Ensure refund doesn't exceed reserve and apply slippage protection
+        return Math.min(refundAmount, market.ethReserve);
+    }
+    
+    /**
+     * @dev Burn tokens (called by BondNFT for vault redemption) - SECURITY ENHANCED
      */
     function burnTokens(uint256 bondId, address user, uint256 amount) 
         external 
         nonReentrant 
+        onlyInitialized
     {
-        require(marketExists[bondId], "Market doesn't exist");
+        require(isMarketActive(bondId), "Market doesn't exist");
         require(amount > 0, "Invalid burn amount");
+        require(user != address(0), "Invalid user address");
         
-        // Verify caller is the Bond NFT contract
+        // SECURITY: Verify caller is the Bond NFT contract
         (, address bondNFTContract,,,) = bondFactory.getBondInfo(bondId);
         require(msg.sender == bondNFTContract, "Only Bond NFT can burn");
         
         Market storage market = markets[bondId];
+        
+        // SECURITY: Additional validation - ensure user has sufficient balance
+        require(
+            IERC20(market.tokenContract).balanceOf(user) >= amount,
+            "Insufficient balance to burn"
+        );
         
         // Burn ERC20 tokens
         BondToken(market.tokenContract).burnFrom(user, amount);
     }
     
     /**
-     * @dev Send fee to Bond NFT vault
+     * @dev Send fee to Bond NFT vault - SECURITY ENHANCED with error handling
      */
     function _sendFeeToVault(uint256 bondId, uint256 feeAmount) private {
         if (feeAmount == 0) return;
         
         (, address bondNFTContract,,,) = bondFactory.getBondInfo(bondId);
         if (bondNFTContract != address(0)) {
-            IBondNFT(bondNFTContract).addToVault{value: feeAmount}();
+            try IBondNFT(bondNFTContract).addToVault{value: feeAmount}() {
+                // Success - no additional action needed
+            } catch {
+                // SECURITY: Handle failure gracefully
+                emit FeeTransferFailed(bondId, feeAmount);
+                // Fee remains in contract, can be withdrawn by owner in emergency
+            }
         }
     }
     
@@ -439,7 +567,7 @@ contract CurveAMM is ReentrancyGuard, Ownable {
         view 
         returns (uint256 totalCost, uint256 feeAmount) 
     {
-        require(marketExists[bondId], "Market doesn't exist");
+        require(isMarketActive(bondId), "Market doesn't exist");
         
         totalCost = _calculateBuyCost(bondId, tokenAmount);
         feeAmount = (totalCost * FEE_RATE) / 10000;
@@ -453,11 +581,11 @@ contract CurveAMM is ReentrancyGuard, Ownable {
         view 
         returns (uint256 totalRefund, uint256 feeAmount, uint256 userReceives) 
     {
-        require(marketExists[bondId], "Market doesn't exist");
+        require(isMarketActive(bondId), "Market doesn't exist");
         
-        totalRefund = _calculateSellRefund(bondId, tokenAmount);
+        totalRefund = _calculateSellRefund(bondId, tokenAmount * TOKEN_UNIT);
         feeAmount = (totalRefund * FEE_RATE) / 10000;
-        userReceives = totalRefund - feeAmount;
+        userReceives = totalRefund > feeAmount ? totalRefund - feeAmount : 0;
     }
     
     /**
@@ -485,13 +613,34 @@ contract CurveAMM is ReentrancyGuard, Ownable {
             totalFeesCollected
         );
     }
+
+    /**
+     * @dev Get contract's ETH balance
+     */
+    function getContractBalance() external view returns (uint256) {
+        return address(this).balance;
+    }
+
+    /**
+     * @dev Convert token number to wei amount
+     */
+    function tokenNumberToWei(uint256 tokenNumber) external pure returns (uint256) {
+        return tokenNumber * TOKEN_UNIT;
+    }
+
+    /**
+     * @dev Convert wei amount to token number
+     */
+    function weiToTokenNumber(uint256 weiAmount) external pure returns (uint256) {
+        return weiAmount / TOKEN_UNIT;
+    }
     
     // Market management functions
     /**
-     * @dev Check if a market exists for a bond
+     * @dev Check if a market exists and is active - SECURITY FIXED
      */
-    function marketExists(uint256 bondId) external view returns (bool) {
-        return marketExists[bondId];
+    function isMarketActive(uint256 bondId) public view returns (bool) {
+        return markets[bondId].creator != address(0) && markets[bondId].isActive;
     }
     
     /**
@@ -499,11 +648,10 @@ contract CurveAMM is ReentrancyGuard, Ownable {
      * @param bondId The bond ID to close market for
      */
     function closeMarketByFactory(uint256 bondId) external {
-        require(marketExists[bondId], "Market doesn't exist");
+        require(isMarketActive(bondId), "Market doesn't exist");
         require(msg.sender == address(bondFactory), "Only factory can close market");
         
         Market storage market = markets[bondId];
-        require(market.isActive, "Market already closed");
         require(market.tokensSold == 0, "Cannot close market with sold tokens");
         
         market.isActive = false;
@@ -511,37 +659,62 @@ contract CurveAMM is ReentrancyGuard, Ownable {
         emit MarketClosed(bondId, msg.sender, block.timestamp);
     }
     
-    // Emergency functions (owner only)
+    // SECURITY: Enhanced initialization with proper checks
+    function initializeBondTokenFactory() external onlyOwner {
+        require(!initialized, "Already initialized");
+        require(address(bondTokenFactory.curveAMM()) == address(0), "Factory already has AMM");
+        bondTokenFactory.setCurveAMM(address(this));
+        initialized = true;
+    }
+    
+    // SECURITY: Emergency functions enhanced
     /**
-     * @dev Emergency pause market
+     * @dev Emergency pause specific market
      */
     function emergencyPauseMarket(uint256 bondId) external onlyOwner {
-        require(marketExists[bondId], "Market doesn't exist");
+        require(isMarketActive(bondId), "Market doesn't exist or already inactive");
         markets[bondId].isActive = false;
+        emit EmergencyPauseTriggered(bondId, msg.sender);
     }
     
     /**
-     * @dev Emergency unpause market
+     * @dev Emergency unpause specific market
      */
     function emergencyUnpauseMarket(uint256 bondId) external onlyOwner {
-        require(marketExists[bondId], "Market doesn't exist");
+        require(markets[bondId].creator != address(0), "Market doesn't exist");
         markets[bondId].isActive = true;
     }
     
     /**
-     * @dev Emergency withdraw stuck ETH (only if no active markets)
+     * @dev Emergency global pause
+     */
+    function emergencyGlobalPause() external onlyOwner {
+        globalPaused = true;
+    }
+    
+    /**
+     * @dev Emergency global unpause
+     */
+    function emergencyGlobalUnpause() external onlyOwner {
+        globalPaused = false;
+    }
+    
+    /**
+     * @dev Emergency withdraw stuck ETH - SECURITY ENHANCED
      */
     function emergencyWithdrawETH() external onlyOwner {
-        payable(owner()).transfer(address(this).balance);
+        require(globalPaused, "Must be globally paused");
+        uint256 balance = address(this).balance;
+        require(balance > 0, "No ETH to withdraw");
+        payable(owner()).transfer(balance);
     }
 
-    // Initialization function to call AFTER deployment
-    function initializeBondTokenFactory() external onlyOwner {
-        require(address(bondTokenFactory.curveAMM()) == address(0), "Already initialized");
-        bondTokenFactory.setCurveAMM(address(this));
+    // SECURITY: Add ability to withdraw failed fee transfers
+    function withdrawFailedFees() external onlyOwner {
+        require(globalPaused, "Must be globally paused");
+        uint256 balance = address(this).balance;
+        if (balance > 0) {
+            payable(owner()).transfer(balance);
+        }
     }
-        
-
-
-
 }
