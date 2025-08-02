@@ -1,10 +1,40 @@
 'use client'
 
-import { useState, useEffect } from 'react'
-import { useReadContract, useReadContracts, useWriteContract, useAccount } from 'wagmi'
-import { Loader2, ArrowLeft, TrendingUp, TrendingDown, Package, X, RefreshCw } from 'lucide-react'
+import { useState, useEffect, useCallback } from 'react'
+import { useReadContract, useWriteContract, useAccount } from 'wagmi'
+import { Loader2, ArrowLeft, TrendingUp, TrendingDown, Package, X, RefreshCw, Power } from 'lucide-react'
 import { CONTRACT_ADDRESSES, CURVE_AMM_ABI, BOND_FACTORY_ABI } from '../../lib/contracts'
-import { Address, formatEther, parseEther } from 'viem'
+import { Address, formatEther } from 'viem'
+import { Line } from 'react-chartjs-2'
+import Inventory from './inventory'
+import {
+  Chart as ChartJS,
+  CategoryScale,
+  LinearScale,
+  PointElement,
+  LineElement,
+  Title,
+  Tooltip,
+  Legend,
+  TimeScale,
+  ChartOptions
+} from 'chart.js'
+import 'chart.js/auto'
+import 'chartjs-adapter-date-fns'
+import annotationPlugin from 'chartjs-plugin-annotation'
+
+// Register ChartJS components
+ChartJS.register(
+  CategoryScale,
+  LinearScale,
+  PointElement,
+  LineElement,
+  TimeScale,
+  Title,
+  Tooltip,
+  Legend,
+  annotationPlugin
+)
 
 interface Market {
   bondId: number
@@ -33,6 +63,24 @@ interface TokenHolder {
   isContract?: boolean
 }
 
+interface PricePoint {
+  tokenNumber: number
+  price: number
+  type?: 'buy' | 'sell' | 'market_created'
+  timestamp?: number
+  hash?: string
+  ethAmount?: string
+}
+
+interface Transaction {
+  hash: string
+  transactionType: 'buy' | 'sell' | 'market_created'
+  bondId: string
+  timestamp: string
+  ethAmount: string
+  blockNumber: string
+}
+
 export default function MarketDetails({ bondId, onBack }: MarketDetailsProps) {
   const [market, setMarket] = useState<Market | null>(null)
   const [loading, setLoading] = useState(true)
@@ -42,11 +90,14 @@ export default function MarketDetails({ bondId, onBack }: MarketDetailsProps) {
   const [userBalance, setUserBalance] = useState<bigint>(BigInt(0))
   const [estimatedBuyCost, setEstimatedBuyCost] = useState<bigint>(BigInt(0))
   const [estimatedSellValue, setEstimatedSellValue] = useState<bigint>(BigInt(0))
-  const [transactionHistory, setTransactionHistory] = useState<any[]>([])
+  const [transactionHistory, setTransactionHistory] = useState<Transaction[]>([])
   const [loadingTransactions, setLoadingTransactions] = useState(false)
   const [tab, setTab] = useState<'buy' | 'sell'>('buy')
-  const [sellStep, setSellStep] = useState<'idle' | 'approving' | 'ready' | 'selling'>('idle')
+  const [sellStep, setSellStep] = useState<'idle' | 'selling'>('idle')
   const [showInventory, setShowInventory] = useState(false)
+  const [priceHistory, setPriceHistory] = useState<PricePoint[]>([])
+  const [curvePoints, setCurvePoints] = useState<PricePoint[]>([])
+  const [isClosingMarket, setIsClosingMarket] = useState(false)
   
   const { writeContract } = useWriteContract()
   const { address } = useAccount()
@@ -60,7 +111,7 @@ export default function MarketDetails({ bondId, onBack }: MarketDetailsProps) {
   })
 
   // Get token contract
-  const { data: tokenContract, isLoading: isTokenLoading } = useReadContract({
+  const { data: tokenContract } = useReadContract({
     address: CONTRACT_ADDRESSES.CURVE_AMM,
     abi: CURVE_AMM_ABI,
     functionName: 'getBondTokenContract',
@@ -76,7 +127,7 @@ export default function MarketDetails({ bondId, onBack }: MarketDetailsProps) {
   })
 
   // Get user balance
-  const { data: balance, isLoading: isBalanceLoading, refetch: refetchBalance } = useReadContract({
+  const { data: balance } = useReadContract({
     address: CONTRACT_ADDRESSES.CURVE_AMM,
     abi: CURVE_AMM_ABI,
     functionName: 'getTokenBalance',
@@ -85,6 +136,79 @@ export default function MarketDetails({ bondId, onBack }: MarketDetailsProps) {
       enabled: !!tokenContract && !!address,
     }
   })
+
+  // Get real buy cost from contract
+  const { data: buyCostData } = useReadContract({
+    address: CONTRACT_ADDRESSES.CURVE_AMM,
+    abi: CURVE_AMM_ABI,
+    functionName: 'previewBuyCost',
+    args: [BigInt(bondId), BigInt(parseInt(buyAmount) || 1)],
+    query: {
+      enabled: !!market,
+    }
+  })
+
+  // Get default buy cost for 1 token to show real buy price
+  const { data: defaultBuyCostData } = useReadContract({
+    address: CONTRACT_ADDRESSES.CURVE_AMM,
+    abi: CURVE_AMM_ABI,
+    functionName: 'previewBuyCost',
+    args: [BigInt(bondId), BigInt(1)],
+    query: {
+      enabled: !!market,
+    }
+  })
+
+
+
+  // Get real sell refund from contract
+  const { data: sellRefundData } = useReadContract({
+    address: CONTRACT_ADDRESSES.CURVE_AMM,
+    abi: CURVE_AMM_ABI,
+    functionName: 'previewSellRefund',
+    args: [BigInt(bondId), BigInt(parseInt(sellAmount) || 1)],
+    query: {
+      enabled: !!market,
+    }
+  })
+
+  // Get default sell refund for 1 token to show real sell price
+  const { data: defaultSellRefundData } = useReadContract({
+    address: CONTRACT_ADDRESSES.CURVE_AMM,
+    abi: CURVE_AMM_ABI,
+    functionName: 'previewSellRefund',
+    args: [BigInt(bondId), BigInt(1)],
+    query: {
+      enabled: !!market,
+    }
+  })
+
+  // Get contract ETH balance for debugging
+  const { data: contractBalance } = useReadContract({
+    address: CONTRACT_ADDRESSES.CURVE_AMM,
+    abi: CURVE_AMM_ABI,
+    functionName: 'getContractBalance',
+    query: {
+      enabled: !!market,
+    }
+  })
+
+  // Debug: Log sell refund data and contract balance
+  useEffect(() => {
+    if (sellRefundData && Array.isArray(sellRefundData) && sellRefundData.length >= 3) {
+      console.log('Contract previewSellRefund data:', {
+        totalRefund: formatEther(sellRefundData[0] as bigint),
+        feeAmount: formatEther(sellRefundData[1] as bigint),
+        userReceives: formatEther(sellRefundData[2] as bigint),
+        sellAmount: sellAmount || '1'
+      })
+    }
+    if (contractBalance !== undefined && market) {
+      console.log('Contract ETH balance:', formatEther(contractBalance))
+      console.log('Market ETH reserve:', formatEther(market.ethReserve))
+      console.log('Difference (contract - reserve):', formatEther(contractBalance - market.ethReserve))
+    }
+  }, [sellRefundData, sellAmount, contractBalance, market])
 
   // Process market data
   useEffect(() => {
@@ -130,6 +254,9 @@ export default function MarketDetails({ bondId, onBack }: MarketDetailsProps) {
 
         setMarket(marketData)
         setLoading(false)
+
+        // Generate price history data
+        generatePriceHistory(marketData)
       } else {
         setError('Invalid market data format')
         setLoading(false)
@@ -148,6 +275,287 @@ export default function MarketDetails({ bondId, onBack }: MarketDetailsProps) {
     }
   }, [balance])
 
+  // Generate price history data incorporating real transaction data
+  const generatePriceHistory = useCallback((marketData: Market) => {
+    console.log('Generating price history with transactions:', transactionHistory.length);
+    
+    const tokensSold = Number(marketData.tokensSold)
+    const tokensForSale = Number(marketData.tokensForSale)
+    
+    // Create price history points based on transactions
+    const historyPoints: PricePoint[] = []
+    
+    // Ensure all price points have timestamps for the time-based chart
+    const now = Math.floor(Date.now() / 1000)
+    
+    // Function to ensure minimum spacing between transaction points (in seconds)
+    const ensureMinimumSpacing = (transactions: Transaction[], minSpacingSeconds: number = 3600) => {
+      if (transactions.length <= 1) return transactions;
+      
+      // Sort by timestamp
+      const sorted = [...transactions].sort((a, b) => parseInt(a.timestamp) - parseInt(b.timestamp));
+      
+      // First pass - identify transactions that are too close
+      for (let i = 1; i < sorted.length; i++) {
+        const prevTime = parseInt(sorted[i-1].timestamp);
+        const currTime = parseInt(sorted[i].timestamp);
+        
+        if (currTime - prevTime < minSpacingSeconds) {
+          // Adjust timestamp to ensure minimum spacing
+          sorted[i].timestamp = (prevTime + minSpacingSeconds).toString();
+        }
+      }
+      
+      return sorted;
+    }
+    
+    // Add transaction-based data points if available
+    if (transactionHistory.length > 0) {
+      console.log('Processing transaction history for chart');
+      
+      // Sort transactions by timestamp (oldest first) and ensure minimum spacing
+      const filteredTxs = [...transactionHistory]
+        .filter(tx => tx.transactionType === 'buy' || tx.transactionType === 'sell' || tx.transactionType === 'market_created');
+      
+      // Apply minimum spacing of 2 hours between transactions
+      const sortedTxs = ensureMinimumSpacing(filteredTxs, 7200);
+      
+      console.log('Sorted transactions with spacing:', sortedTxs.length);
+      
+      // Find market creation event
+      const marketCreationEvent = sortedTxs.find(tx => tx.transactionType === 'market_created');
+      const firstEventTimestamp = sortedTxs.length > 0 ? parseInt(sortedTxs[0].timestamp) : Math.floor(Date.now() / 1000) - 86400;
+      
+      // Start with a base point at token 0
+      historyPoints.push({
+        tokenNumber: 0,
+        price: 0,
+        timestamp: marketCreationEvent ? parseInt(marketCreationEvent.timestamp) - 3600 : firstEventTimestamp - 86400
+      });
+      
+      // Add market creation event if available
+      if (marketCreationEvent) {
+        historyPoints.push({
+          tokenNumber: 0,
+          price: 0.0001, // Very small initial price
+          timestamp: parseInt(marketCreationEvent.timestamp),
+          type: 'market_created',
+          hash: marketCreationEvent.hash,
+          ethAmount: "0.0001" // Small value for market creation
+        });
+      }
+      
+      // Track token count over time
+      let tokenCount = 0;
+      
+      // Process each transaction chronologically
+      for (const tx of sortedTxs) {
+        // Skip market_created as we've already added it
+        if (tx.transactionType === 'market_created') continue;
+        
+        // Calculate price based on current token count - handle potential Infinity
+        let currentPrice = 0;
+        try {
+          // Safely convert to BigInt with error handling
+          const safeTokenCount = isFinite(tokenCount) && tokenCount >= 0 ? BigInt(Math.floor(tokenCount)) : BigInt(0);
+          currentPrice = Number(formatEther(calculateTokenPrice(safeTokenCount)));
+        } catch (err) {
+          console.error('Error calculating current price:', err);
+          currentPrice = 0.001; // Fallback price
+        }
+        
+        if (tx.transactionType === 'buy' && tx.ethAmount) {
+          // Estimate tokens bought with safety checks
+          const ethSpent = parseFloat(tx.ethAmount) || 0;
+          const estimatedTokens = currentPrice > 0 ? Math.max(1, Math.round(ethSpent / currentPrice)) : 1;
+          
+          console.log(`Buy TX: ${tx.hash?.slice(0, 6)} - ETH: ${ethSpent}, Est. Tokens: ${estimatedTokens}, Price: ${currentPrice}`);
+          
+          // Update token count with safety check
+          tokenCount = Math.max(0, tokenCount + estimatedTokens);
+          
+          // Calculate new price after buying with safety check
+          let newPrice = 0;
+          try {
+            const safeTokenCount = isFinite(tokenCount) && tokenCount >= 0 ? BigInt(Math.floor(tokenCount)) : BigInt(1);
+            newPrice = Number(formatEther(calculateTokenPrice(safeTokenCount)));
+          } catch (err) {
+            console.error('Error calculating new price after buy:', err);
+            newPrice = currentPrice * 1.05; // Fallback: 5% increase
+          }
+          
+          // Add point for buy transaction
+          historyPoints.push({
+            tokenNumber: tokenCount,
+            price: newPrice,
+            timestamp: parseInt(tx.timestamp),
+            type: 'buy',
+            hash: tx.hash,
+            ethAmount: tx.ethAmount
+          });
+          
+          console.log(`Added buy point: Tokens=${tokenCount}, Price=${newPrice}, Time=${new Date(parseInt(tx.timestamp) * 1000).toLocaleString()}`);
+          
+        } else if (tx.transactionType === 'sell' && tx.ethAmount) {
+          // Estimate tokens sold with safety checks
+          const ethReceived = parseFloat(tx.ethAmount) || 0;
+          const estimatedTokens = currentPrice > 0 ? Math.max(1, Math.round(ethReceived / currentPrice)) : 1;
+          
+          console.log(`Sell TX: ${tx.hash?.slice(0, 6)} - ETH: ${ethReceived}, Est. Tokens: ${estimatedTokens}, Price: ${currentPrice}`);
+          
+          // Update token count with safety check
+          tokenCount = Math.max(0, tokenCount - estimatedTokens);
+          
+          // Calculate new price after selling with safety check
+          let newPrice = 0;
+          try {
+            const safeTokenCount = isFinite(tokenCount) && tokenCount > 0 ? BigInt(Math.floor(tokenCount)) : BigInt(1);
+            newPrice = Number(formatEther(calculateTokenPrice(safeTokenCount)));
+          } catch (err) {
+            console.error('Error calculating new price after sell:', err);
+            newPrice = currentPrice * 0.95; // Fallback: 5% decrease
+          }
+          
+          // Add point for sell transaction
+          historyPoints.push({
+            tokenNumber: tokenCount,
+            price: newPrice,
+            timestamp: parseInt(tx.timestamp),
+            type: 'sell',
+            hash: tx.hash,
+            ethAmount: tx.ethAmount
+          });
+          
+          console.log(`Added sell point: Tokens=${tokenCount}, Price=${newPrice}, Time=${new Date(parseInt(tx.timestamp) * 1000).toLocaleString()}`);
+        }
+      }
+      
+      // Add current state point if we have transactions
+      if (sortedTxs.length > 0) {
+        try {
+          // Safely handle tokensSold conversion
+          const safeTokensSold = isFinite(tokensSold) && tokensSold >= 0 ? BigInt(Math.floor(tokensSold)) : BigInt(1);
+          const currentPrice = Number(formatEther(calculateTokenPrice(safeTokensSold)));
+          
+          // Get the last transaction's ethAmount or use a small default
+          const lastTx = sortedTxs[sortedTxs.length - 1];
+          const lastEthAmount = lastTx.ethAmount ? lastTx.ethAmount : "0.0002";
+          
+          historyPoints.push({
+            tokenNumber: tokensSold,
+            price: currentPrice,
+            timestamp: Math.floor(Date.now() / 1000),
+            ethAmount: lastEthAmount // Use the last transaction's value
+          });
+        } catch (err) {
+          console.error('Error calculating current price point:', err);
+        }
+      }
+      
+      console.log(`Generated ${historyPoints.length} transaction-based history points`);
+    } else {
+      // No transactions, generate a simple curve
+      // Start point - 24 hours ago
+      historyPoints.push({
+        tokenNumber: 0,
+        price: 0,
+        timestamp: now - 86400
+      });
+      
+      // Add market creation point - 12 hours ago
+      historyPoints.push({
+        tokenNumber: 0,
+        price: 0.0001, // Very small initial price
+        timestamp: now - 43200, // 12 hours ago
+        type: 'market_created',
+        ethAmount: "0.0001" // Small value for market creation
+      });
+      
+      // Current point
+      if (tokensSold > 0) {
+        try {
+          // Safely handle tokensSold conversion
+          const safeTokensSold = isFinite(tokensSold) && tokensSold >= 0 ? BigInt(Math.floor(tokensSold)) : BigInt(1);
+          const currentPrice = Number(formatEther(calculateTokenPrice(safeTokensSold)));
+          
+          historyPoints.push({
+            tokenNumber: tokensSold,
+            price: currentPrice,
+            timestamp: now,
+            ethAmount: "0.0002" // Small value for current point
+          });
+        } catch (err) {
+          console.error('Error calculating current price point in no-transactions case:', err);
+          // Add a fallback point with estimated price
+          historyPoints.push({
+            tokenNumber: tokensSold,
+            price: 0.0001 * tokensSold,
+            timestamp: now,
+            ethAmount: "0.0002" // Small value for current point
+          });
+        }
+      }
+    }
+    
+    // Generate theoretical curve points for reference
+    const maxPoints = 20;
+    const curvePoints: PricePoint[] = [];
+    
+    // Generate curve points with safety checks
+    try {
+      const step = Math.max(1, Math.floor(tokensForSale / maxPoints));
+      for (let i = 0; i <= tokensForSale; i += step) {
+        try {
+          const tokenNumber = i;
+          // Safely convert to BigInt
+          const safeTokenNumber = isFinite(tokenNumber) && tokenNumber >= 0 ? BigInt(Math.floor(tokenNumber)) : BigInt(0);
+          const price = Number(formatEther(calculateTokenPrice(safeTokenNumber)));
+          curvePoints.push({ tokenNumber, price });
+        } catch (err) {
+          console.error(`Error calculating price for token ${i}:`, err);
+        }
+      }
+      
+      // Always include the current position
+      if (tokensSold > 0) {
+        try {
+          const safeTokensSold = isFinite(tokensSold) && tokensSold >= 0 ? BigInt(Math.floor(tokensSold)) : BigInt(1);
+          const price = Number(formatEther(calculateTokenPrice(safeTokensSold)));
+          curvePoints.push({ tokenNumber: tokensSold, price });
+        } catch (err) {
+          console.error('Error calculating current position price:', err);
+        }
+      }
+      
+      // Always include the final token
+      if (tokensForSale > 0) {
+        try {
+          const safeTokensForSale = isFinite(tokensForSale) && tokensForSale >= 0 ? BigInt(Math.floor(tokensForSale)) : BigInt(1);
+          const price = Number(formatEther(calculateTokenPrice(safeTokensForSale)));
+          curvePoints.push({ tokenNumber: tokensForSale, price });
+        } catch (err) {
+          console.error('Error calculating final token price:', err);
+        }
+      }
+    } catch (err) {
+      console.error('Error generating curve points:', err);
+    }
+    
+    // Sort history points by timestamp for proper time-based chart
+    historyPoints.sort((a, b) => {
+      if (a.timestamp && b.timestamp) {
+        return a.timestamp - b.timestamp;
+      }
+      return 0;
+    });
+    
+    console.log(`Final chart has ${historyPoints.length} history points and ${curvePoints.length} curve points`);
+    
+    // Set both datasets
+    setPriceHistory(historyPoints);
+    setCurvePoints(curvePoints);
+  }, [transactionHistory]) // Add dependencies
+
   // Calculate token price based on its position
   const calculateTokenPrice = (tokenNumber: bigint): bigint => {
     if (tokenNumber === BigInt(0)) return BigInt(0)
@@ -159,61 +567,70 @@ export default function MarketDetails({ bondId, onBack }: MarketDetailsProps) {
     return (tokenNumber * tokenNumber * PRICE_SCALE) / CURVE_STEEPNESS
   }
 
-  // Calculate cost to buy tokens
+  // Calculate cost to buy tokens - use real contract data
   const calculateBuyCost = (tokenAmount: number): bigint => {
     if (!market || tokenAmount <= 0) return BigInt(0)
     
-    let totalCost = BigInt(0)
-    const tokensSold = market.tokensSold
+    // For now, use the current price * amount as a simple approximation
+    // In a real implementation, we would call previewBuyCost from the contract
+    const totalCost = market.currentPrice * BigInt(tokenAmount)
     
-    for (let i = 0; i < tokenAmount; i++) {
-      const tokenNumber = tokensSold + BigInt(i) + BigInt(1)
-      const price = calculateTokenPrice(tokenNumber)
-      totalCost += price
-    }
+    console.log(`Calculating buy cost for ${tokenAmount} tokens`)
+    console.log(`Current price: ${formatEther(market.currentPrice)} ETH`)
+    console.log(`Total cost: ${formatEther(totalCost)} ETH`)
     
     return totalCost
   }
 
-  // Calculate value from selling tokens
+  // Calculate value from selling tokens - use real contract data
   const calculateSellValue = (tokenAmount: number): bigint => {
     if (!market || tokenAmount <= 0) return BigInt(0)
     
-    let totalValue = BigInt(0)
-    const tokensSold = market.tokensSold
+    // Use real contract data: average ETH per token * amount to sell
+    const ethPerToken = market.tokensSold > 0 ? market.ethReserve / market.tokensSold : BigInt(0)
+    const totalValue = ethPerToken * BigInt(tokenAmount)
     
-    for (let i = 0; i < tokenAmount; i++) {
-      const tokenNumber = tokensSold - BigInt(i)
-      if (tokenNumber > 0) {
-        const price = calculateTokenPrice(tokenNumber)
-        totalValue += price
-      }
-    }
+    console.log(`Calculating sell value for ${tokenAmount} tokens`)
+    console.log(`ETH Reserve: ${formatEther(market.ethReserve)} ETH`)
+    console.log(`Tokens Sold: ${market.tokensSold}`)
+    console.log(`ETH per Token: ${formatEther(ethPerToken)} ETH`)
+    console.log(`Total sell value: ${formatEther(totalValue)} ETH`)
     
     return totalValue
   }
   
-  // Calculate ETH per token (average value)
+  // Calculate ETH per token (average value) - use real contract data
   const calculateEthPerToken = (market: Market): bigint => {
     if (market.tokensSold === BigInt(0)) return BigInt(0)
     
-    // Average ETH value per token = ETH Reserve / Tokens Sold
-    return market.ethReserve / market.tokensSold
+    // Convert tokensSold from wei to token numbers for display
+    const tokensSoldNumber = market.tokensSold / BigInt(10 ** 18)
+    
+    // Average ETH value per token = ETH Reserve / Tokens Sold (in token numbers)
+    return market.ethReserve / tokensSoldNumber
   }
 
-  // Update estimated costs when buy amount changes
+  // Update estimated costs when buy amount changes - use real contract data
   useEffect(() => {
-    const amount = parseInt(buyAmount) || 0
-    const cost = calculateBuyCost(amount)
-    setEstimatedBuyCost(cost)
-  }, [buyAmount, market])
+    if (buyCostData && Array.isArray(buyCostData) && buyCostData.length >= 1) {
+      setEstimatedBuyCost(buyCostData[0]) // totalCost
+    } else {
+      const amount = parseInt(buyAmount) || 0
+      const cost = calculateBuyCost(amount)
+      setEstimatedBuyCost(cost)
+    }
+  }, [buyAmount, buyCostData, calculateBuyCost])
 
-  // Update estimated value when sell amount changes
+  // Update estimated value when sell amount changes - use real contract data
   useEffect(() => {
-    const amount = parseInt(sellAmount) || 0
-    const value = calculateSellValue(amount)
-    setEstimatedSellValue(value)
-  }, [sellAmount, market])
+    if (sellRefundData && Array.isArray(sellRefundData) && sellRefundData.length >= 3) {
+      setEstimatedSellValue(sellRefundData[2]) // userReceives (after fees)
+    } else {
+      const amount = parseInt(sellAmount) || 0
+      const value = calculateSellValue(amount)
+      setEstimatedSellValue(value)
+    }
+  }, [sellAmount, sellRefundData, calculateSellValue])
 
   // Buy tokens
   const handleBuyTokens = () => {
@@ -258,41 +675,130 @@ export default function MarketDetails({ bondId, onBack }: MarketDetailsProps) {
     }
   ] as const
 
-  // Step 1: Approve tokens for selling
-  const handleApproveTokens = () => {
+  // Combined sell function that handles both approval and selling
+  const handleSellTokens = () => {
     if (!market || !address) return
     
     const amount = parseInt(sellAmount) || 0
     if (amount <= 0 || amount > Number(userBalance)) return
     
-    console.log(`Step 1: Approving ${amount} tokens for CurveAMM to spend`)
-    setSellStep('approving')
+    // Check if we're trying to sell more tokens than have been sold
+    if (amount > Number(market.tokensSold)) {
+      alert(`Cannot sell ${amount} tokens. Only ${market.tokensSold.toString()} tokens have been sold.`)
+      return
+    }
     
+    // Debug: Check market state before selling
+    console.log('=== SELL DEBUG ===')
+    console.log('Market state:', {
+      tokensSold: market.tokensSold.toString(),
+      ethReserve: market.ethReserve.toString(),
+      currentPrice: market.currentPrice.toString(),
+      userBalance: userBalance.toString()
+    })
+    console.log(`Selling ${amount} tokens`)
+    
+    // Use real contract data if available
+    if (sellRefundData && Array.isArray(sellRefundData) && sellRefundData.length >= 3) {
+      const totalRefund = sellRefundData[0]
+      const feeAmount = sellRefundData[1]
+      const userReceives = sellRefundData[2]
+      
+      console.log(`Real contract data:`)
+      console.log(`Total refund: ${formatEther(totalRefund)} ETH`)
+      console.log(`Fee amount: ${formatEther(feeAmount)} ETH`)
+      console.log(`User receives: ${formatEther(userReceives)} ETH`)
+      console.log(`ETH Reserve: ${formatEther(market.ethReserve)} ETH`)
+      console.log(`Can afford: ${totalRefund <= market.ethReserve}`)
+      
+      // Check if we have enough ETH in reserve
+      if (totalRefund > market.ethReserve) {
+        alert(`Cannot sell ${amount} tokens. Not enough ETH in reserve. Total refund: ${formatEther(totalRefund)} ETH, Reserve: ${formatEther(market.ethReserve)} ETH`)
+        return
+      }
+    } else {
+      // Fallback to calculated value
+      const calculatedValue = calculateSellValue(amount)
+      console.log(`Calculated value: ${formatEther(calculatedValue)} ETH`)
+      console.log(`ETH Reserve: ${formatEther(market.ethReserve)} ETH`)
+      console.log(`Can afford: ${calculatedValue <= market.ethReserve}`)
+      
+      if (calculatedValue > market.ethReserve) {
+        alert(`Cannot sell ${amount} tokens. Not enough ETH in reserve. Calculated value: ${formatEther(calculatedValue)} ETH, Reserve: ${formatEther(market.ethReserve)} ETH`)
+        return
+      }
+    }
+    
+    console.log('==================')
+    
+    setSellStep('selling')
+    
+    // Step 1: Approve tokens first
+    console.log(`Step 1: Approving ${amount} tokens for CurveAMM to spend`)
     writeContract({
       address: market.tokenContract,
       abi: ERC20_ABI,
       functionName: 'approve',
       args: [CONTRACT_ADDRESSES.CURVE_AMM, BigInt(amount)],
+    }, {
+      onSuccess: (data) => {
+        console.log('Approval successful, now selling tokens...')
+        // Step 2: Sell tokens after approval
+        console.log(`Step 2: Selling ${amount} tokens`)
+        writeContract({
+          address: CONTRACT_ADDRESSES.CURVE_AMM,
+          abi: CURVE_AMM_ABI,
+          functionName: 'sellTokens',
+          args: [BigInt(bondId), BigInt(amount)],
+        }, {
+          onSuccess: () => {
+            console.log('Sell completed successfully!')
+            setSellStep('idle')
+            setSellAmount('')
+            // Refresh market data to get updated ethReserve
+            refetchMarket()
+            // Force a delay to ensure blockchain state is updated
+            setTimeout(() => {
+              refetchMarket()
+            }, 2000)
+          },
+          onError: (error) => {
+            console.error('Error selling tokens:', error)
+            setSellStep('idle')
+            alert('Failed to sell tokens. Please try again.')
+          }
+        })
+      },
+      onError: (error) => {
+        console.error('Error approving tokens:', error)
+        setSellStep('idle')
+        alert('Failed to approve tokens. Please try again.')
+      }
     })
   }
 
-  // Step 2: Sell tokens (after approval)
-  const handleSellTokens = () => {
-    if (!market) return
+  // Handle defragmentalization (close market and redeem NFTs)
+  const handleDefragmentalizeBond = async () => {
+    if (!market || !address) return
     
-    const amount = parseInt(sellAmount) || 0
-    if (amount <= 0 || amount > Number(userBalance)) return
-    
-    const value = calculateSellValue(amount)
-    console.log(`Step 2: Selling ${amount} tokens for approximately ${formatEther(value)} ETH`)
-    setSellStep('selling')
-    
-    writeContract({
-      address: CONTRACT_ADDRESSES.CURVE_AMM,
-      abi: CURVE_AMM_ABI,
-      functionName: 'sellTokens',
-      args: [BigInt(bondId), BigInt(amount)],
-    })
+    setIsClosingMarket(true)
+    try {
+      await writeContract({
+        address: CONTRACT_ADDRESSES.BOND_FACTORY,
+        abi: BOND_FACTORY_ABI,
+        functionName: 'defragmentalizeBond',
+        args: [BigInt(bondId)],
+      })
+      
+      // Show success message and go back to markets list
+      alert('Market closed successfully! You can now redeem your NFTs.')
+      onBack()
+    } catch (error) {
+      console.error('Error closing market:', error)
+      alert('Failed to close market. Please try again.')
+    } finally {
+      setIsClosingMarket(false)
+    }
   }
 
   // Reset sell step when amount changes
@@ -301,7 +807,7 @@ export default function MarketDetails({ bondId, onBack }: MarketDetailsProps) {
   }, [sellAmount])
 
   // Fetch transaction history
-  const fetchTransactionHistory = async () => {
+  const fetchTransactionHistory = useCallback(async () => {
     if (!CONTRACT_ADDRESSES.CURVE_AMM) return
     
     console.log('🔍 Starting transaction history fetch...')
@@ -326,7 +832,7 @@ export default function MarketDetails({ bondId, onBack }: MarketDetailsProps) {
       
       if (data.transactions) {
         // Filter transactions related to this bondId
-        const bondTransactions = data.transactions.filter((tx: any) => {
+        const bondTransactions = data.transactions.filter((tx: Transaction) => {
           // Only include buy, sell, and market_created transactions
           const isRelevant = tx.transactionType === 'buy' || tx.transactionType === 'sell' || tx.transactionType === 'market_created'
           console.log(`🔍 Transaction ${tx.hash?.slice(0, 8) || 'unknown'}: type=${tx.transactionType}, bondId=${tx.bondId}, relevant=${isRelevant}`)
@@ -336,7 +842,17 @@ export default function MarketDetails({ bondId, onBack }: MarketDetailsProps) {
         console.log(`✅ Filtered ${bondTransactions.length} relevant transactions from ${data.transactions.length} total`)
         console.log('📋 Bond transactions:', bondTransactions)
         
-        setTransactionHistory(bondTransactions)
+        // If we have relevant transactions, update the state and regenerate price history
+        if (bondTransactions.length > 0) {
+          setTransactionHistory(bondTransactions)
+          
+          // If we have market data, regenerate price history with the new transactions
+          if (market) {
+            generatePriceHistory(market)
+          }
+        } else {
+          setTransactionHistory(bondTransactions)
+        }
       } else {
         console.log('❌ No transactions field in response')
       }
@@ -346,20 +862,20 @@ export default function MarketDetails({ bondId, onBack }: MarketDetailsProps) {
       setLoadingTransactions(false)
       console.log('🏁 Transaction history fetch completed')
     }
-  }
+  }, [bondId, market]) // Add dependencies
 
   // Load transaction history when component mounts
   useEffect(() => {
     console.log('🚀 Component mounted, fetching transaction history for bondId:', bondId)
     fetchTransactionHistory()
-  }, [bondId])
+  }, [bondId]) // Remove fetchTransactionHistory from dependencies
 
   // Format helpers
   const formatEthPrice = (wei: bigint) => {
     const eth = formatEther(wei)
     const num = parseFloat(eth)
-    if (num < 0.0001) return '< 0.0001'
-    return num.toFixed(6)
+    if (num < 0.00001) return '< 0.00001'
+    return num.toFixed(5)
   }
 
   const formatNumber = (value: bigint) => {
@@ -372,6 +888,246 @@ export default function MarketDetails({ bondId, onBack }: MarketDetailsProps) {
 
   const shortenAddress = (addr: string) => {
     return `${addr.slice(0, 6)}...${addr.slice(-4)}`
+  }
+
+  // Chart data
+  // Determine chart time range based on market activity events
+  const getTimeAxisRange = () => {
+    // If no transaction history, use default time range
+    if (transactionHistory.length === 0) {
+      const now = Math.floor(Date.now() / 1000);
+      return {
+        start: now - 86400, // 24 hours ago
+        end: now
+      };
+    }
+
+    // Sort transactions by timestamp (oldest first)
+    const sortedTxs = [...transactionHistory]
+      .filter(tx => tx.timestamp)
+      .sort((a, b) => parseInt(a.timestamp) - parseInt(b.timestamp));
+
+    if (sortedTxs.length === 0) return { start: 0, end: 0 };
+
+    // Get first and last event timestamps
+    const firstEvent = parseInt(sortedTxs[0].timestamp);
+    const lastEvent = parseInt(sortedTxs[sortedTxs.length - 1].timestamp);
+    
+    // Use market creation time if available
+    const marketCreationEvent = sortedTxs.find(tx => tx.transactionType === 'market_created');
+    const startTime = marketCreationEvent ? parseInt(marketCreationEvent.timestamp) : firstEvent;
+    
+    // Add more padding to the time range (4 hours before first event, 4 hours after last event)
+    const paddedStart = startTime - 14400;
+    const paddedEnd = lastEvent + 14400;
+    
+    console.log(`Chart time range: ${new Date(paddedStart * 1000).toLocaleString()} to ${new Date(paddedEnd * 1000).toLocaleString()}`);
+    
+    return {
+      start: paddedStart,
+      end: paddedEnd
+    };
+  };
+
+  // Get time axis range
+  const timeRange = getTimeAxisRange();
+  
+  // Ensure minimum bond price values for better visibility
+  const ensureMinimumValue = (value: number, minValue: number = 0.00001) => {
+    return value < minValue ? minValue : value;
+  };
+
+  const chartData = {
+    // For time-based x-axis, we need to format data differently
+    datasets: [
+      {
+        label: 'Bond Price (ETH)',
+        data: priceHistory.map(p => ({
+          x: p.timestamp ? p.timestamp * 1000 : Date.now(), // Convert to milliseconds for Chart.js
+          y: ensureMinimumValue(p.price, 0.00001) // Use bond price, ensure minimum value with 5 decimals
+        })),
+        borderColor: 'rgb(59, 130, 246)', // blue
+        backgroundColor: 'rgba(59, 130, 246, 0.1)',
+        borderWidth: 2,
+        pointRadius: (context: { dataIndex: number }) => {
+          const point = priceHistory[context.dataIndex];
+          if (!point || !point.type) return 4; // Increased default point size
+          if (point.type === 'buy') return 10; // Larger points for buy transactions
+          if (point.type === 'sell') return 10; // Larger points for sell transactions
+          if (point.type === 'market_created') return 8; // Medium size for market creation
+          return 4; // Default size for other points
+        },
+        pointBackgroundColor: (context: { dataIndex: number }) => {
+          const point = priceHistory[context.dataIndex];
+          if (!point || !point.type) return 'rgba(59, 130, 246, 0.5)';
+          
+          if (point.type === 'buy') return 'rgba(34, 197, 94, 0.9)'; // green
+          if (point.type === 'sell') return 'rgba(239, 68, 68, 0.9)'; // red
+          if (point.type === 'market_created') return 'rgba(124, 58, 237, 0.9)'; // purple
+          return 'rgba(59, 130, 246, 0.5)'; // blue
+        },
+        pointBorderColor: (context: { dataIndex: number }) => {
+          const point = priceHistory[context.dataIndex];
+          if (!point || !point.type) return 'rgba(59, 130, 246, 1)';
+          
+          if (point.type === 'buy') return 'rgba(34, 197, 94, 1)'; // green
+          if (point.type === 'sell') return 'rgba(239, 68, 68, 1)'; // red
+          if (point.type === 'market_created') return 'rgba(124, 58, 237, 1)'; // purple
+          return 'rgba(59, 130, 246, 1)'; // blue
+        },
+        pointBorderWidth: 2,
+        pointHoverRadius: 10,
+        pointHoverBorderWidth: 3,
+        pointHitRadius: 15, // Easier to hover/click on points
+        tension: 0.2, // Slightly smoother curve
+        fill: 'origin',
+        stepped: false,
+        showLine: true, // Ensure line is visible
+        spanGaps: true, // Connect points even if there are gaps
+      }
+    ]
+  }
+
+  // Create annotations for transaction events
+  const createEventAnnotations = () => {
+    const annotations: Record<string, any> = {};
+    
+    // Add annotations for each transaction point
+    priceHistory.forEach((point, index) => {
+      if (point.type === 'buy' || point.type === 'sell' || point.type === 'market_created') {
+        const color = point.type === 'buy' 
+          ? 'rgba(34, 197, 94, 1)' 
+          : point.type === 'sell' 
+            ? 'rgba(239, 68, 68, 1)' 
+            : 'rgba(124, 58, 237, 1)';
+        
+        // Use bond price for y-value with minimum value
+        const yValue = ensureMinimumValue(point.price, 0.00001);
+        
+        annotations[`point-${index}`] = {
+          type: 'point',
+          xValue: point.timestamp ? point.timestamp * 1000 : Date.now(),
+          yValue: yValue,
+          backgroundColor: color,
+          borderColor: 'white',
+          borderWidth: 2,
+          radius: point.type === 'market_created' ? 8 : 10,
+          z: 10
+        };
+      }
+    });
+    
+    return annotations;
+  };
+
+  const chartOptions: ChartOptions<'line'> = {
+    responsive: true,
+    maintainAspectRatio: false,
+    interaction: {
+      mode: 'index',
+      intersect: false,
+    },
+    scales: {
+      x: {
+        title: {
+          display: true,
+          text: 'Time'
+        },
+        ticks: {
+          maxRotation: 45,
+          minRotation: 45,
+          autoSkip: true,
+          maxTicksLimit: 8
+        },
+        // Set time axis min/max based on market activity events
+        min: timeRange.start * 1000, // Convert to milliseconds for Chart.js
+        max: timeRange.end * 1000,
+        type: 'time',
+        time: {
+          unit: 'hour',
+          displayFormats: {
+            minute: 'MMM d, HH:mm',
+            hour: 'MMM d, HH:mm',
+            day: 'MMM d, yyyy'
+          },
+          tooltipFormat: 'MMM d, yyyy HH:mm'
+        }
+      },
+      y: {
+        beginAtZero: true,
+        title: {
+          display: true,
+          text: 'Bond Price (ETH)'
+        },
+        ticks: {
+          callback: function(value) {
+            return Number(value).toFixed(5) + ' ETH'
+          }
+        },
+        // Set a reasonable max value based on bond prices
+        suggestedMax: Math.max(
+          ...priceHistory
+            .map(p => p.price)
+        ) * 1.2 || 0.001
+      }
+    },
+    plugins: {
+      legend: {
+        display: false,
+      },
+      annotation: {
+        annotations: createEventAnnotations()
+      },
+      tooltip: {
+        backgroundColor: 'rgba(0, 0, 0, 0.8)',
+        titleColor: 'white',
+        bodyColor: 'white',
+        borderColor: 'rgba(255, 255, 255, 0.2)',
+        borderWidth: 1,
+        padding: 10,
+        displayColors: false,
+        callbacks: {
+          title: function(tooltipItems) {
+            // With time-based axis, the x value is already a timestamp in milliseconds
+            const timestamp = tooltipItems[0].parsed.x;
+            const date = new Date(timestamp);
+            // Format: Month day, year HH:MM
+            return date.toLocaleDateString('en-US', { 
+              month: 'short', 
+              day: 'numeric', 
+              year: 'numeric',
+              hour: '2-digit',
+              minute: '2-digit'
+            });
+          },
+          label: function(context: { parsed: { y: number, x: number }, dataIndex: number }) {
+            const point = priceHistory[context.dataIndex];
+            let label = `Bond Price: ${context.parsed.y.toFixed(5)} ETH`;
+            
+            // Add transaction info if available
+            if (point && point.type) {
+              if (point.type === 'market_created') {
+                label = `Market Created\nBond Price: ${context.parsed.y.toFixed(5)} ETH`;
+              } else if (point.type === 'buy') {
+                label = `Buy Transaction\nBond Price: ${context.parsed.y.toFixed(5)} ETH`;
+                
+                if (point.hash) {
+                  label += `\nTx: ${point.hash.slice(0, 6)}...${point.hash.slice(-4)}`;
+                }
+              } else if (point.type === 'sell') {
+                label = `Sell Transaction\nBond Price: ${context.parsed.y.toFixed(5)} ETH`;
+                
+                if (point.hash) {
+                  label += `\nTx: ${point.hash.slice(0, 6)}...${point.hash.slice(-4)}`;
+                }
+              }
+            }
+            
+            return label;
+          }
+        }
+      }
+    },
   }
 
   if (loading) {
@@ -418,7 +1174,7 @@ export default function MarketDetails({ bondId, onBack }: MarketDetailsProps) {
             {market.isActive ? "Active" : "Inactive"}
           </span>
         </div>
-        <div>
+        <div className="flex items-center space-x-2">
           <button 
             onClick={() => refetchMarket()} 
             className="flex items-center gap-2 px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors"
@@ -426,6 +1182,22 @@ export default function MarketDetails({ bondId, onBack }: MarketDetailsProps) {
             <RefreshCw className="h-4 w-4" />
             Refresh
           </button>
+          
+          {/* Close Market button - only show for market creator when market is active */}
+          {market && market.isActive && address && market.creator.toLowerCase() === address.toLowerCase() && (
+            <button 
+              onClick={handleDefragmentalizeBond}
+              disabled={isClosingMarket}
+              className="flex items-center gap-2 px-4 py-2 border border-red-300 text-red-700 rounded-lg hover:bg-red-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {isClosingMarket ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <Power className="h-4 w-4" />
+              )}
+              {isClosingMarket ? 'Closing...' : 'Close Market'}
+            </button>
+          )}
         </div>
       </div>
 
@@ -447,12 +1219,12 @@ export default function MarketDetails({ bondId, onBack }: MarketDetailsProps) {
             <div className="space-y-3">
               <div className="flex justify-between">
                 <span className="text-gray-600">Total Supply:</span>
-                <span>{formatNumber(market.totalSupply)}</span>
+                <span>{formatNumber(market.totalSupply / BigInt(10 ** 18))}</span>
               </div>
               
               <div className="flex justify-between">
                 <span className="text-gray-600">Supply in Curve:</span>
-                <span>{formatNumber(market.tokensForSale - market.tokensSold)}</span>
+                <span>{formatNumber((market.tokensForSale - market.tokensSold) / BigInt(10 ** 18))}</span>
               </div>
               
               <div className="flex justify-between">
@@ -491,11 +1263,27 @@ export default function MarketDetails({ bondId, onBack }: MarketDetailsProps) {
             <div className="flex items-center justify-between text-sm mb-2">
               <div className="flex items-center">
                 <TrendingUp className="h-4 w-4 text-green-500 mr-1" />
-                <span>Buy: <span className="text-green-600 font-medium">{formatEthPrice(market.currentPrice)} ETH</span></span>
+                <span>Buy: <span className="text-green-600 font-medium">
+                  {buyCostData && Array.isArray(buyCostData) && buyCostData.length >= 1 && parseInt(buyAmount) > 0 
+                    ? formatEthPrice(buyCostData[0] / BigInt(parseInt(buyAmount))) // totalCost / amount
+                    : defaultBuyCostData && Array.isArray(defaultBuyCostData) && defaultBuyCostData.length >= 1
+                      ? formatEthPrice(defaultBuyCostData[0]) // totalCost for 1 token
+                      : formatEthPrice(market.currentPrice)
+                  } ETH
+                </span></span>
               </div>
               <div className="flex items-center">
                 <TrendingDown className="h-4 w-4 text-red-500 mr-1" />
-                <span>Sell: <span className="text-red-600 font-medium">{formatEthPrice(calculateTokenPrice(market.tokensSold))}</span></span>
+                <span>Sell: <span className="text-red-600 font-medium">
+                  {sellRefundData && Array.isArray(sellRefundData) && sellRefundData.length >= 3 && parseInt(sellAmount) > 0 
+                    ? formatEthPrice(sellRefundData[2] / BigInt(parseInt(sellAmount))) // userReceives / amount
+                    : defaultSellRefundData && Array.isArray(defaultSellRefundData) && defaultSellRefundData.length >= 3
+                      ? formatEthPrice(defaultSellRefundData[2]) // userReceives for 1 token
+                      : market.tokensSold > 0 
+                        ? formatEthPrice(market.ethReserve / market.tokensSold) 
+                        : '0.00000'
+                  } ETH
+                </span></span>
               </div>
             </div>
             
@@ -518,7 +1306,7 @@ export default function MarketDetails({ bondId, onBack }: MarketDetailsProps) {
               </div>
               <div className="text-right text-xs">
                 <div className="text-gray-600">Your Balance:</div>
-                <div className="font-medium">{formatNumber(userBalance)}</div>
+                <div className="font-medium">{formatNumber(userBalance / BigInt(10 ** 18))}</div>
               </div>
             </div>
             
@@ -599,42 +1387,20 @@ export default function MarketDetails({ bondId, onBack }: MarketDetailsProps) {
                       <div className="mb-1">
                         <span className="text-sm font-medium text-gray-700">Confirm</span>
                       </div>
-                      {sellStep === 'idle' && (
-                        <button
-                          onClick={handleApproveTokens}
-                          className="w-full bg-red-600 hover:bg-red-700 text-white py-2 px-3 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed text-sm"
-                          disabled={!market.isActive || parseInt(sellAmount) <= 0 || parseInt(sellAmount) > Number(userBalance) || !address}
-                        >
-                          Approve
-                        </button>
-                      )}
-                      
-                      {sellStep === 'approving' && (
-                        <button
-                          disabled
-                          className="w-full bg-yellow-500 opacity-75 text-white py-2 px-3 rounded-lg text-sm"
-                        >
-                          <Loader2 className="h-4 w-4 animate-spin mr-1 inline" />
-                          Approving
-                        </button>
-                      )}
-                      
-                      {(sellStep === 'ready' || sellStep === 'selling') && (
-                        <button
-                          onClick={handleSellTokens}
-                          className="w-full bg-red-600 hover:bg-red-700 text-white py-2 px-3 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed text-sm"
-                          disabled={sellStep === 'selling'}
-                        >
-                          {sellStep === 'selling' ? (
-                            <>
-                              <Loader2 className="h-4 w-4 animate-spin mr-1 inline" />
-                              Selling
-                            </>
-                          ) : (
-                            'Sell'
-                          )}
-                        </button>
-                      )}
+                      <button
+                        onClick={handleSellTokens}
+                        className="w-full bg-red-600 hover:bg-red-700 text-white py-2 px-3 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed text-sm"
+                        disabled={!market.isActive || parseInt(sellAmount) <= 0 || parseInt(sellAmount) > Number(userBalance) || !address || sellStep === 'selling'}
+                      >
+                        {sellStep === 'selling' ? (
+                          <>
+                            <Loader2 className="h-4 w-4 animate-spin mr-1 inline" />
+                            Selling...
+                          </>
+                        ) : (
+                          'Sell'
+                        )}
+                      </button>
                     </div>
                   </div>
                   
@@ -645,16 +1411,7 @@ export default function MarketDetails({ bondId, onBack }: MarketDetailsProps) {
                     </div>
                   </div>
                   
-                  {sellStep === 'approving' && (
-                    <div className="mt-2">
-                      <button
-                        onClick={() => setSellStep('ready')}
-                        className="w-full border border-gray-300 rounded-lg py-1 px-3 text-xs hover:bg-gray-50 transition-colors"
-                      >
-                        Approval Complete - Continue
-                      </button>
-                    </div>
-                  )}
+
                 </div>
               )}
             </div>
@@ -675,20 +1432,21 @@ export default function MarketDetails({ bondId, onBack }: MarketDetailsProps) {
                 <tbody className="bg-white divide-y divide-gray-200">
                   {/* Show only real data: contract balance and current user balance */}
                   {(() => {
-                    const totalSupply = Number(market.totalSupply);
+                    const totalSupply = Number(market.totalSupply / BigInt(10 ** 18));
                     const holders: TokenHolder[] = [];
                     
                     // Add current user if they have balance
                     if (address && userBalance > BigInt(0)) {
+                      const userBalanceNumber = Number(userBalance / BigInt(10 ** 18));
                       holders.push({
                         address: address,
-                        balance: userBalance.toString(),
-                        percentage: (Number(userBalance) / totalSupply * 100).toFixed(1)
+                        balance: userBalanceNumber.toString(),
+                        percentage: (userBalanceNumber / totalSupply * 100).toFixed(1)
                       });
                     }
                     
                     // Add contract as holder of remaining supply
-                    const contractBalance = totalSupply - Number(userBalance);
+                    const contractBalance = totalSupply - Number(userBalance / BigInt(10 ** 18));
                     if (contractBalance > 0) {
                       holders.push({
                         address: market.tokenContract,
@@ -742,11 +1500,34 @@ export default function MarketDetails({ bondId, onBack }: MarketDetailsProps) {
           </div>
         </div>
 
-        {/* Right column - Market Activity */}
-        <div className="lg:col-span-2">
+        {/* Center and Right columns - Chart and Market Activity */}
+        <div className="lg:col-span-2 space-y-6">
+          {/* Price History Chart */}
           <div className="bg-white rounded-xl border border-gray-200 p-6 shadow-sm">
-            <h3 className="text-lg font-semibold mb-4">Market Activity</h3>
-            <div className="overflow-auto max-h-[600px]">
+            <h3 className="text-lg font-semibold mb-4">Price History</h3>
+            <div className="h-80">
+              <Line data={chartData} options={chartOptions} />
+            </div>
+          </div>
+        
+          {/* Market Activity */}
+          <div className="bg-white rounded-xl border border-gray-200 p-6 shadow-sm">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-lg font-semibold">Market Activity</h3>
+              <button
+                onClick={fetchTransactionHistory}
+                disabled={loadingTransactions}
+                className="flex items-center gap-2 px-3 py-1 text-sm border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors disabled:opacity-50"
+              >
+                {loadingTransactions ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <RefreshCw className="h-4 w-4" />
+                )}
+                {loadingTransactions ? 'Loading...' : 'Refresh'}
+              </button>
+            </div>
+            <div className="overflow-auto max-h-[400px]">
               <table className="min-w-full divide-y divide-gray-200">
                 <thead className="bg-gray-50">
                   <tr>
@@ -832,14 +1613,10 @@ export default function MarketDetails({ bondId, onBack }: MarketDetailsProps) {
               </button>
             </div>
             
-            {/* Modal Content */}
-            <div className="p-6 overflow-y-auto max-h-[calc(90vh-120px)]">
-              <div className="text-center py-8 text-gray-600">
-                <Package className="h-12 w-12 mx-auto mb-4 text-gray-400" />
-                <p>Asset inventory component coming soon...</p>
-                <p className="text-sm mt-2">This will show the NFTs locked in this bond.</p>
+                          {/* Modal Content */}
+              <div className="p-6 overflow-y-auto max-h-[calc(90vh-120px)]">
+                <Inventory bondId={bondId} />
               </div>
-            </div>
           </div>
         </div>
       )}
