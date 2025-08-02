@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react'
 import { useAccount } from 'wagmi'
 import { Coins, Wallet, Package, DollarSign, TrendingUp, ExternalLink } from 'lucide-react'
 import { NFTsTab } from '../tabs/nfts-tab'
+import { BondsTab } from '../tabs/bonds-tab'
 import { useNFTs } from '../../hooks/useNFTs'
 
 interface NFT {
@@ -42,17 +43,7 @@ export function Assets({ selectedNFTs, onSelectedNFTsChange }: AssetsProps) {
     totalHighestBids: nfts.reduce((sum, nft) => sum + (nft.maxOffer ? parseFloat(nft.maxOffer) : 0), 0)
   }
 
-  const mockBonds = [
-    {
-      id: '1',
-      name: 'Bond #001',
-      nftName: 'Bored Ape #1234',
-      totalSupply: '1000',
-      currentPrice: '0.015',
-      totalVolume: '45.2',
-      isRedeemable: false
-    }
-  ]
+
 
   useEffect(() => {
     setIsMounted(true)
@@ -189,44 +180,7 @@ export function Assets({ selectedNFTs, onSelectedNFTsChange }: AssetsProps) {
 
           {/* Bonds Tab */}
           {activeTab === 'bonds' && (
-            <div className="space-y-4">
-              <h3 className="text-lg font-semibold text-gray-800">Your Bonds</h3>
-              
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                {mockBonds.map((bond) => (
-                  <div key={bond.id} className="border border-gray-200 rounded-xl p-4">
-                    <div className="flex justify-between items-start mb-3">
-                      <h4 className="font-semibold text-gray-800">{bond.name}</h4>
-                      <span className="text-sm text-gray-500">{bond.nftName}</span>
-                    </div>
-                    <div className="space-y-2 text-sm">
-                      <div className="flex justify-between">
-                        <span className="text-gray-600">Total Supply:</span>
-                        <span className="text-gray-800">{bond.totalSupply}</span>
-                      </div>
-                      <div className="flex justify-between">
-                        <span className="text-gray-600">Current Price:</span>
-                        <span className="text-gray-800">{bond.currentPrice} ETH</span>
-                      </div>
-                      <div className="flex justify-between">
-                        <span className="text-gray-600">Total Volume:</span>
-                        <span className="text-gray-800">{bond.totalVolume} ETH</span>
-                      </div>
-                    </div>
-                    <div className="mt-4 flex gap-2">
-                      <button className="flex-1 px-3 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors text-sm">
-                        Trade
-                      </button>
-                      {bond.isRedeemable && (
-                        <button className="flex-1 px-3 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors text-sm">
-                          Redeem
-                        </button>
-                      )}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
+            <BondsTab onBondRedeemed={handleBondCreated} />
           )}
 
           {/* Tokens Tab */}
