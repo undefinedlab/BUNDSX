@@ -3,6 +3,7 @@
 import { useState } from 'react'
 import { Coins, Plus, Filter, Search, ExternalLink } from 'lucide-react'
 import { useNFTs } from '../../hooks/useNFTs'
+import { CreateBondModal } from '../modals/create-bond-modal'
 
 interface NFT {
   id: string
@@ -41,6 +42,7 @@ export function NFTsTab({
   const [searchTerm, setSearchTerm] = useState('')
   const [selectedChain, setSelectedChain] = useState<'all' | 'ethereum' | 'base'>('all')
   const [sortBy, setSortBy] = useState<'name' | 'floorPrice' | 'collection'>('name')
+  const [isCreateBondModalOpen, setIsCreateBondModalOpen] = useState(false)
 
   // Use the hook to fetch real NFT data
   const { nfts: hookNFTs, stats, isLoading: hookLoading, error: hookError, fetchNFTs } = useNFTs()
@@ -51,6 +53,18 @@ export function NFTsTab({
   const error = hookError || externalError
 
   const filteredNFTs = displayNFTs.filter(nft => {
+    // Hide unnamed/unknown collections
+    const isUnknownCollection = !nft.collection || 
+                               nft.collection.trim() === '' || 
+                               nft.collection.toLowerCase().includes('unknown') ||
+                               nft.collection.toLowerCase().includes('unnamed') ||
+                               nft.collection.toLowerCase().includes('untitled') ||
+                               nft.collection === 'Unknown' ||
+                               nft.collection === 'Unnamed' ||
+                               nft.collection === 'Untitled'
+    
+    if (isUnknownCollection) return false
+    
     const matchesSearch = nft.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
                          nft.collection.toLowerCase().includes(searchTerm.toLowerCase())
     const matchesChain = selectedChain === 'all' || nft.chain === selectedChain
@@ -75,9 +89,12 @@ export function NFTsTab({
       alert('Please select at least one NFT to create a bond')
       return
     }
-    // Mock bond creation
-    alert(`Creating bond for ${selectedNFTs.length} selected NFT(s)...`)
+    setIsCreateBondModalOpen(true)
+  }
+
+  const handleBondCreated = () => {
     onBondCreated()
+    onSelectedNFTsChange([]) // Clear selection after bond creation
   }
 
   const handleSelectAll = () => {
@@ -234,7 +251,7 @@ export function NFTsTab({
            <div className="flex justify-between items-center">
              <span className="text-sm text-gray-600">Best Bid:</span>
              <span className="text-sm font-medium text-green-600">
-               {nft.maxOffer ? parseFloat(nft.maxOffer).toFixed(1) : '0.0'} ETH
+               {nft.maxOffer ? parseFloat(nft.maxOffer).toFixed(7) : '0.0'} ETH
              </span>
            </div>
          </div>
@@ -242,6 +259,14 @@ export function NFTsTab({
           ))}
         </div>
       )}
+
+      {/* Create Bond Modal */}
+      <CreateBondModal
+        isOpen={isCreateBondModalOpen}
+        onClose={() => setIsCreateBondModalOpen(false)}
+        selectedNFTs={selectedNFTs}
+        onBondCreated={handleBondCreated}
+      />
     </div>
   )
 } 

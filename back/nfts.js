@@ -29,10 +29,25 @@ async function getNFTsByAddress(address, chainId, limit = 50, offset = 0) {
     
     console.log(`Found ${assets.length} NFTs from 1inch API`);
     
-    // Enhance NFTs with OpenSea data
-    const enhancedAssets = await enhanceNFTsWithOpenSeaData(assets, address);
-    
-    return { assets: enhancedAssets };
+               // Enhance NFTs with OpenSea data
+           const enhancedAssets = await enhanceNFTsWithOpenSeaData(assets, address);
+           
+           // Filter out unknown/unnamed collections
+           const filteredAssets = enhancedAssets.filter(asset => {
+             const collectionName = asset.collection_name || asset.collection?.name || '';
+             const isUnknownCollection = !collectionName || 
+                                       collectionName.trim() === '' || 
+                                       collectionName.toLowerCase().includes('unknown') ||
+                                       collectionName.toLowerCase().includes('unnamed') ||
+                                       collectionName.toLowerCase().includes('untitled') ||
+                                       collectionName === 'Unknown' ||
+                                       collectionName === 'Unnamed' ||
+                                       collectionName === 'Untitled';
+             
+             return !isUnknownCollection;
+           });
+           
+           return { assets: filteredAssets };
            } catch (error) {
            console.error('Error fetching NFTs from 1inch API:', error.message);
            
