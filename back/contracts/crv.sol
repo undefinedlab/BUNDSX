@@ -65,6 +65,12 @@ contract CurveAMM is ReentrancyGuard, Ownable {
         uint256 newPrice
     );
     
+    event MarketClosed(
+        uint256 indexed bondId,
+        address indexed closer,
+        uint256 timestamp
+    );
+    
     // Market data structure with exponential curve
     struct Market {
         uint256 totalSupply;           // Total tokens created for this bond
@@ -478,6 +484,31 @@ contract CurveAMM is ReentrancyGuard, Ownable {
             totalVolumeETH,
             totalFeesCollected
         );
+    }
+    
+    // Market management functions
+    /**
+     * @dev Check if a market exists for a bond
+     */
+    function marketExists(uint256 bondId) external view returns (bool) {
+        return marketExists[bondId];
+    }
+    
+    /**
+     * @dev Close market by factory (called during bond defragmentalization)
+     * @param bondId The bond ID to close market for
+     */
+    function closeMarketByFactory(uint256 bondId) external {
+        require(marketExists[bondId], "Market doesn't exist");
+        require(msg.sender == address(bondFactory), "Only factory can close market");
+        
+        Market storage market = markets[bondId];
+        require(market.isActive, "Market already closed");
+        require(market.tokensSold == 0, "Cannot close market with sold tokens");
+        
+        market.isActive = false;
+        
+        emit MarketClosed(bondId, msg.sender, block.timestamp);
     }
     
     // Emergency functions (owner only)

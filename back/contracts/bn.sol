@@ -27,6 +27,7 @@ contract BondNFT is ERC721, ReentrancyGuard, Initializable {
     event TokensRedeemed(uint256 indexed bondId, address indexed user, uint256 tokenAmount, uint256 ethAmount);
     event NFTsClaimed(uint256 indexed bondId, address indexed owner);
     event CurveAMMSet(uint256 indexed bondId, address curveAMM);
+    event BondDefragmentalized(uint256 indexed bondId, address indexed owner, uint256 timestamp);
     
     // Bond state
     struct BondData {
@@ -196,6 +197,25 @@ contract BondNFT is ERC721, ReentrancyGuard, Initializable {
         }
         
         emit NFTsClaimed(bondId, msg.sender);
+    }
+    
+    /**
+     * @dev Defragmentalize bond (convert back from fractionalized to whole bond)
+     * Only callable by bond owner after all tokens are returned
+     */
+    function defragmentalize() external onlyBondOwner {
+        require(bondData.isFragmentalized, "Bond is not fractionalized");
+        require(
+            bondData.tokensReturned == bondData.totalSupply, 
+            "All tokens must be returned before defragmentalization"
+        );
+        
+        // Reset fractionalization state
+        bondData.isFragmentalized = false;
+        bondData.totalSupply = 0;
+        bondData.tokensReturned = 0;
+        
+        emit BondDefragmentalized(bondId, msg.sender, block.timestamp);
     }
     
     // View functions
