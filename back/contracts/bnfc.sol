@@ -184,7 +184,7 @@ contract BondFactory is ReentrancyGuard, Ownable {
         // Check if any tokens were sold in the curve (if CurveAMM exists)
         if (curveAMM != address(0)) {
             // Check if market exists and has sold tokens
-            bool marketExists = ICurveAMM(curveAMM).marketExists(bondId);
+            bool marketExists = ICurveAMM(curveAMM).isMarketActive(bondId);
             if (marketExists) {
                 (, , uint256 tokensSold, , , , ,) = ICurveAMM(curveAMM).getMarketInfo(bondId);
                 require(tokensSold == 0, "Cannot defragmentalize bond with sold tokens");

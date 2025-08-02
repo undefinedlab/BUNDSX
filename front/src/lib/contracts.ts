@@ -3,9 +3,9 @@ import { Address } from 'viem'
 // Contract addresses - Update these after deployment on Base
 export const CONTRACT_ADDRESSES = {
   // These will be updated with actual deployed addresses on Base
-  BOND_FACTORY: '0x301957e16A43C33Fd3330E69B06E4B53f360b0F9' as Address, // Replace with deployed Bond Factory address
-  CURVE_AMM: '0xe7e4325Be5bE18897d4a5a3B7eCDf4809676FeA9' as Address, // Replace with deployed CurveAMM address
-  BOND_TOKEN_FACTORY: '0x224aB7D4d491362c4b1B741Eb4edC975b76c75b0' as Address, // Replace with deployed BondTokenFactory address
+  BOND_FACTORY: '0xD91A5A05593B727009034F89bB3CEa4C2c5C43A1' as Address, // Replace with deployed Bond Factory address
+  CURVE_AMM: '0x79b3e404eD2a75d479Dd13D6e67e1bCE4f08a7dD' as Address, // Replace with deployed CurveAMM address
+  BOND_TOKEN_FACTORY: '0x55bFfE6DDB15B4BE9A46d209086CE936b891aD0f' as Address, // Replace with deployed BondTokenFactory address
 } as const
 
 // Bond Factory ABI - comprehensive functions from bnfc.sol
@@ -289,6 +289,22 @@ export const CURVE_AMM_ABI = [
     },
     {
       "type": "function",
+      "name": "emergencyInitialize",
+      "inputs": [],
+      "outputs": [],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function",
+      "name": "initialized",
+      "inputs": [],
+      "outputs": [
+        { "name": "", "type": "bool" }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
       "name": "emergencyWithdrawETH",
       "inputs": [],
       "outputs": [],
@@ -325,7 +341,7 @@ export const CURVE_AMM_ABI = [
     },
     {
       "type": "function",
-      "name": "marketExists",
+      "name": "isMarketActive",
       "inputs": [
         { "name": "bondId", "type": "uint256" }
       ],
@@ -360,6 +376,17 @@ export const CURVE_AMM_ABI = [
       "inputs": [
         { "name": "bondId", "type": "uint256" },
         { "name": "user", "type": "address" }
+      ],
+      "outputs": [
+        { "name": "", "type": "uint256" }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "getTokensAvailable",
+      "inputs": [
+        { "name": "bondId", "type": "uint256" }
       ],
       "outputs": [
         { "name": "", "type": "uint256" }

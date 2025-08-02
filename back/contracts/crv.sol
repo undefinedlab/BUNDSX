@@ -120,7 +120,6 @@ contract CurveAMM is ReentrancyGuard, Ownable {
     
     // SECURITY: Added circuit breakers
     uint256 public constant MAX_TOKENS_PER_TRANSACTION = 1000 * TOKEN_UNIT;
-    uint256 public constant MAX_PRICE_IMPACT = 1000; // 10%
     uint256 public constant MAX_TOKEN_NUMBER = type(uint128).max; // Prevent overflow
     
     // Statistics
@@ -194,7 +193,7 @@ contract CurveAMM is ReentrancyGuard, Ownable {
         uint256 totalSupplyWei = totalSupply * TOKEN_UNIT;
         uint256 tokensForSaleWei = tokensForSale * TOKEN_UNIT;
         
-        // Initialize market with exponential curve (starts at price 0)
+        // Initialize market with linear curve (starts at price 0)
         Market storage market = markets[bondId];
         market.totalSupply = totalSupplyWei;
         market.tokensForSale = tokensForSaleWei;
@@ -218,7 +217,7 @@ contract CurveAMM is ReentrancyGuard, Ownable {
     }
     
     /**
-     * @dev Buy tokens from the exponential curve
+     * @dev Buy tokens from the linear curve
      * @param bondId The bond market to buy from
      * @param tokenAmount Number of tokens to buy
      */
@@ -235,15 +234,9 @@ contract CurveAMM is ReentrancyGuard, Ownable {
         Market storage market = markets[bondId];
         require(market.tokensSold + (tokenAmount * TOKEN_UNIT) <= market.tokensForSale, "Not enough tokens available");
         
-        // SECURITY: Check price impact
+        // Calculate new price for next token
         uint256 currentTokenNumber = market.tokensSold / TOKEN_UNIT;
-        uint256 oldPrice = market.currentPrice;
         uint256 newPrice = _calculatePrice(currentTokenNumber + tokenAmount + 1);
-        
-        if (oldPrice > 0) {
-            uint256 priceImpact = ((newPrice - oldPrice) * 10000) / oldPrice;
-            require(priceImpact <= MAX_PRICE_IMPACT, "Price impact too high");
-        }
         
         // Calculate total cost for buying tokenAmount tokens
         uint256 totalCost = _calculateBuyCost(bondId, tokenAmount);
@@ -251,14 +244,14 @@ contract CurveAMM is ReentrancyGuard, Ownable {
         
         // Calculate fee
         uint256 feeAmount = (totalCost * FEE_RATE) / 10000;
-        uint256 ethForReserve = totalCost - feeAmount;
+        uint256 priceForReserve = totalCost - feeAmount;
         
         // Convert token amount to proper ERC20 amount
         uint256 tokenAmountWei = tokenAmount * TOKEN_UNIT;
         
         // Update market state
         market.tokensSold += tokenAmountWei;
-        market.ethReserve += ethForReserve;
+        market.ethReserve += priceForReserve; // Only the price goes to reserve (fee goes to vault)
         market.currentPrice = newPrice;
         
         // Mint real ERC20 tokens to buyer
@@ -282,14 +275,14 @@ contract CurveAMM is ReentrancyGuard, Ownable {
             bondId, 
             msg.sender, 
             tokenAmount, 
-            ethForReserve, 
+            priceForReserve, 
             feeAmount, 
             market.currentPrice
         );
     }
     
     /**
-     * @dev Sell tokens back to the exponential curve
+     * @dev Sell tokens back to the linear curve
      * @param bondId The bond market to sell to
      * @param tokenAmount Amount of tokens to sell
      */
@@ -315,21 +308,21 @@ contract CurveAMM is ReentrancyGuard, Ownable {
             "Insufficient token balance"
         );
         
-        // Calculate ETH to receive for selling tokenAmount tokens
-        uint256 totalRefund = _calculateSellRefund(bondId, tokenAmountWei);
-        require(totalRefund > 0, "No refund available");
-        require(totalRefund <= market.ethReserve, "Insufficient ETH reserve");
+        // Calculate price for selling tokenAmount tokens
+        uint256 priceForTokens = _calculateSellRefund(bondId, tokenAmountWei);
+        require(priceForTokens > 0, "No refund available");
+        require(priceForTokens <= market.ethReserve, "Insufficient ETH reserve");
         
         // Calculate fee
-        uint256 feeAmount = (totalRefund * FEE_RATE) / 10000;
-        uint256 ethToUser = totalRefund - feeAmount;
+        uint256 feeAmount = (priceForTokens * FEE_RATE) / 10000;
+        uint256 ethToUser = priceForTokens - feeAmount;
         
         // Burn ERC20 tokens from seller first (fail fast)
         BondToken(market.tokenContract).burnFrom(msg.sender, tokenAmountWei);
         
         // Update market state
         market.tokensSold -= tokenAmountWei;
-        market.ethReserve -= totalRefund;
+        market.ethReserve -= priceForTokens; // Deduct the price amount from reserve
         market.currentPrice = market.tokensSold > 0 ? _calculatePrice(market.tokensSold / TOKEN_UNIT + 1) : _calculatePrice(1);
         
         // Send ETH to user
@@ -343,7 +336,7 @@ contract CurveAMM is ReentrancyGuard, Ownable {
         }
         
         // Update stats
-        totalVolumeETH += totalRefund;
+        totalVolumeETH += priceForTokens;
         totalFeesCollected += feeAmount;
         
         emit TokensSold(
@@ -357,9 +350,9 @@ contract CurveAMM is ReentrancyGuard, Ownable {
     }
     
     /**
-     * @dev Calculate price for token number n (exponential curve) - SECURITY ENHANCED
-     * Price = (n^2 * PRICE_SCALE) / CURVE_STEEPNESS
-     * Token 1: ~0.001 ETH, Token 100: ~0.1 ETH, Token 500: ~2.5 ETH
+     * @dev Calculate price for token number n (simple linear curve)
+     * Price = tokenNumber * PRICE_SCALE
+     * Token 1: 0.001 ETH, Token 2: 0.002 ETH, Token 100: 0.1 ETH
      */
     function _calculatePrice(uint256 tokenNumber) private pure returns (uint256) {
         if (tokenNumber == 0) return 0;
@@ -367,8 +360,7 @@ contract CurveAMM is ReentrancyGuard, Ownable {
         // SECURITY: Prevent overflow
         require(tokenNumber <= MAX_TOKEN_NUMBER, "Token number too large");
         
-        uint256 squared = tokenNumber * tokenNumber;
-        return (squared * PRICE_SCALE) / CURVE_STEEPNESS;
+        return tokenNumber * PRICE_SCALE;
     }
     
     /**
@@ -398,18 +390,15 @@ contract CurveAMM is ReentrancyGuard, Ownable {
     }
     
     /**
-     * @dev Mathematical formula for calculating large buy costs
-     * Sum of i^2 from (start+1) to (start+amount) = sum of squares formula
+     * @dev Mathematical formula for calculating large buy costs (linear curve)
+     * Sum of i from (start+1) to (start+amount) = arithmetic sequence sum
      */
     function _calculateCostMathematically(uint256 startToken, uint256 amount) private pure returns (uint256) {
         uint256 endToken = startToken + amount;
         
-        // Sum of squares formula: n(n+1)(2n+1)/6
-        uint256 sum1 = startToken * (startToken + 1) * (2 * startToken + 1) / 6;
-        uint256 sum2 = endToken * (endToken + 1) * (2 * endToken + 1) / 6;
-        
-        uint256 sumOfSquares = sum2 - sum1;
-        return (sumOfSquares * PRICE_SCALE) / CURVE_STEEPNESS;
+        // Arithmetic sequence sum: n(a1 + an)/2
+        uint256 sum = amount * (startToken + 1 + endToken) / 2;
+        return sum * PRICE_SCALE;
     }
     
     /**
@@ -664,6 +653,13 @@ contract CurveAMM is ReentrancyGuard, Ownable {
         require(!initialized, "Already initialized");
         require(address(bondTokenFactory.curveAMM()) == address(0), "Factory already has AMM");
         bondTokenFactory.setCurveAMM(address(this));
+        initialized = true;
+    }
+    
+    // SECURITY: Emergency initialization for inconsistent state
+    function emergencyInitialize() external onlyOwner {
+        require(!initialized, "Already initialized");
+        // Don't check if factory has AMM - just set initialized flag
         initialized = true;
     }
     

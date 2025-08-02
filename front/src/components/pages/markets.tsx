@@ -34,20 +34,20 @@ export default function MarketsList({ onBuyTokens }: MarketsListProps) {
   const [error, setError] = useState<string | null>(null)
   const [refreshing, setRefreshing] = useState(false)
 
-  // Simple approach: check for markets with IDs 1-10
-  const MAX_MARKET_IDS_TO_CHECK = 10
+  // Simple approach: check for markets with IDs 0-49
+  const MAX_MARKET_IDS_TO_CHECK = 10  // Increased from 10 to 50 to catch more markets
 
   // Create contracts array to check which markets exist
   const marketExistsContracts = useMemo(() => {
     const contracts: any[] = []
     
-    console.log('Creating contracts to check market existence for IDs 1-10')
+    console.log('Creating contracts to check market existence for IDs 0-49')
     
-    for (let bondId = 1; bondId <= MAX_MARKET_IDS_TO_CHECK; bondId++) {
+    for (let bondId = 0; bondId < MAX_MARKET_IDS_TO_CHECK; bondId++) {
       contracts.push({
         address: CONTRACT_ADDRESSES.CURVE_AMM,
         abi: CURVE_AMM_ABI,
-        functionName: 'marketExists',
+        functionName: 'isMarketActive',
         args: [bondId],
       })
     }
@@ -68,15 +68,23 @@ export default function MarketsList({ onBuyTokens }: MarketsListProps) {
     if (!marketExistsData) return []
     
     const ids: number[] = []
+    console.log('Checking marketExistsData:', marketExistsData)
+    
     marketExistsData.forEach((result, index) => {
-      const bondId = index + 1
+      const bondId = index
+      console.log(`Checking bond ID ${bondId}:`, result)
+      
       if (result.status === 'success' && result.result === true) {
         ids.push(bondId)
-        console.log(`Market ${bondId} exists`)
+        console.log(`✅ Market ${bondId} exists`)
+      } else if (result.status === 'failure') {
+        console.log(`❌ Market ${bondId} check failed:`, result.error)
+      } else {
+        console.log(`❌ Market ${bondId} does not exist (result: ${result.result})`)
       }
     })
     
-    console.log('Existing market IDs:', ids)
+    console.log('✅ Existing market IDs found:', ids)
     return ids
   }, [marketExistsData])
 
@@ -309,7 +317,29 @@ export default function MarketsList({ onBuyTokens }: MarketsListProps) {
   const handleRefresh = async () => {
     setRefreshing(true)
     try {
+      console.log('🔄 Starting manual refresh...')
       await Promise.all([refetchMarketExists(), refetchMarkets()])
+      console.log('✅ Manual refresh completed')
+    } catch (error) {
+      console.error('❌ Manual refresh failed:', error)
+    } finally {
+      setRefreshing(false)
+    }
+  }
+
+  // Force refresh all data
+  const forceRefresh = async () => {
+    setRefreshing(true)
+    try {
+      console.log('🔄 Force refreshing all data...')
+      // Clear any cached data by refetching everything
+      await Promise.all([
+        refetchMarketExists(),
+        refetchMarkets()
+      ])
+      console.log('✅ Force refresh completed')
+    } catch (error) {
+      console.error('❌ Force refresh failed:', error)
     } finally {
       setRefreshing(false)
     }
@@ -390,8 +420,30 @@ export default function MarketsList({ onBuyTokens }: MarketsListProps) {
             <RefreshCw className={`h-4 w-4 ${refreshing ? 'animate-spin' : ''}`} />
             Refresh
           </button>
+          <button
+            onClick={forceRefresh}
+            disabled={refreshing}
+            className="flex items-center gap-2 px-4 py-2 text-sm border border-red-300 text-red-600 rounded-lg hover:bg-red-50 transition-colors disabled:opacity-50"
+          >
+            <RefreshCw className={`h-4 w-4 ${refreshing ? 'animate-spin' : ''}`} />
+            Force Refresh
+          </button>
         </div>
       </div>
+
+      {/* Debug Information */}
+      {process.env.NODE_ENV === 'development' && (
+        <div className="backdrop-blur-md bg-yellow-50/80 rounded-xl border border-yellow-200 p-4 shadow-lg">
+          <h3 className="font-semibold text-yellow-800 mb-2">Debug Information</h3>
+          <div className="text-sm text-yellow-700 space-y-1">
+            <p>Checking markets 0-{MAX_MARKET_IDS_TO_CHECK - 1}</p>
+            <p>Existing market IDs: {existingMarketIds.join(', ') || 'None found'}</p>
+            <p>Markets loaded: {markets.length}</p>
+            <p>Loading states: MarketExists={isMarketExistsLoading}, Markets={isMarketsLoading}, Metadata={isBondMetadataLoading}</p>
+            {marketsError && <p className="text-red-600">Error: {marketsError.message}</p>}
+          </div>
+        </div>
+      )}
 
       {/* Stats Cards */}
       <div className="grid grid-cols-3 gap-4">

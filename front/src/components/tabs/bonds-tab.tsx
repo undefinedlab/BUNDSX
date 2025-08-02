@@ -18,7 +18,7 @@ export function BondsTab({ onBondRedeemed }: BondsTabProps) {
   
   const { bonds, isBondsLoading, refetchBonds } = useBonds()
   const { redeemBond, isRedeeming, isSuccess, error: redeemError, txHash } = useBondRedemption()
-  const { pumpBond, isPumping, error: pumpError } = useBondPump()
+  const { pumpBond, isPumping, isSuccess: isPumpSuccess, error: pumpError, txHash: pumpTxHash, isInitialized } = useBondPump()
 
   const filteredBonds = bonds.filter(bond => {
     const matchesSearch = bond.bondName.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -252,6 +252,10 @@ export function BondsTab({ onBondRedeemed }: BondsTabProps) {
         bonds={bonds.filter(bond => !bond.isRedeemed)}
         onPumpBond={handlePumpBond}
         isPumping={isPumping}
+        isSuccess={isPumpSuccess}
+        txHash={pumpTxHash}
+        error={pumpError}
+        isInitialized={isInitialized}
       />
     </div>
   )

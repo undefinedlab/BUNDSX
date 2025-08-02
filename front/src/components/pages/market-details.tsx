@@ -587,7 +587,8 @@ export default function MarketDetails({ bondId, onBack }: MarketDetailsProps) {
     if (!market || tokenAmount <= 0) return BigInt(0)
     
     // Use real contract data: average ETH per token * amount to sell
-    const ethPerToken = market.tokensSold > 0 ? market.ethReserve / market.tokensSold : BigInt(0)
+    // Prevent division by zero
+    const ethPerToken = market.tokensSold > BigInt(0) ? market.ethReserve / market.tokensSold : BigInt(0)
     const totalValue = ethPerToken * BigInt(tokenAmount)
     
     console.log(`Calculating sell value for ${tokenAmount} tokens`)
@@ -605,6 +606,9 @@ export default function MarketDetails({ bondId, onBack }: MarketDetailsProps) {
     
     // Convert tokensSold from wei to token numbers for display
     const tokensSoldNumber = market.tokensSold / BigInt(10 ** 18)
+    
+    // Prevent division by zero
+    if (tokensSoldNumber === BigInt(0)) return BigInt(0)
     
     // Average ETH value per token = ETH Reserve / Tokens Sold (in token numbers)
     return market.ethReserve / tokensSoldNumber
@@ -781,6 +785,12 @@ export default function MarketDetails({ bondId, onBack }: MarketDetailsProps) {
   const handleDefragmentalizeBond = async () => {
     if (!market || !address) return
     
+    // Check if tokens have been sold
+    if (market.tokensSold > BigInt(0)) {
+      alert('Cannot close market while tokens are sold. All tokens must be returned to the curve first.')
+      return
+    }
+    
     setIsClosingMarket(true)
     try {
       await writeContract({
@@ -793,9 +803,25 @@ export default function MarketDetails({ bondId, onBack }: MarketDetailsProps) {
       // Show success message and go back to markets list
       alert('Market closed successfully! You can now redeem your NFTs.')
       onBack()
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error closing market:', error)
-      alert('Failed to close market. Please try again.')
+      
+      // Provide more specific error messages
+      let errorMessage = 'Failed to close market. Please try again.'
+      
+      if (error.message) {
+        if (error.message.includes('Cannot defragmentalize bond with sold tokens')) {
+          errorMessage = 'Cannot close market while tokens are sold. All tokens must be returned to the curve first.'
+        } else if (error.message.includes('Only bond creator can defragmentalize')) {
+          errorMessage = 'Only the bond creator can close the market.'
+        } else if (error.message.includes('Bond is not fractionalized')) {
+          errorMessage = 'Bond is not fractionalized. No market to close.'
+        } else if (error.message.includes('Bond already redeemed')) {
+          errorMessage = 'Bond has already been redeemed.'
+        }
+      }
+      
+      alert(errorMessage)
     } finally {
       setIsClosingMarket(false)
     }
@@ -1183,20 +1209,28 @@ export default function MarketDetails({ bondId, onBack }: MarketDetailsProps) {
             Refresh
           </button>
           
-          {/* Close Market button - only show for market creator when market is active */}
+          {/* Close Market button - only show for market creator when market is active and no tokens sold */}
           {market && market.isActive && address && market.creator.toLowerCase() === address.toLowerCase() && (
-            <button 
-              onClick={handleDefragmentalizeBond}
-              disabled={isClosingMarket}
-              className="flex items-center gap-2 px-4 py-2 border border-red-300 text-red-700 rounded-lg hover:bg-red-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              {isClosingMarket ? (
-                <Loader2 className="h-4 w-4 animate-spin" />
-              ) : (
-                <Power className="h-4 w-4" />
+            <div className="flex flex-col items-end space-y-2">
+              {market.tokensSold > BigInt(0) && (
+                <div className="text-xs text-orange-600 bg-orange-50 px-2 py-1 rounded">
+                  Market cannot be closed while tokens are sold
+                </div>
               )}
-              {isClosingMarket ? 'Closing...' : 'Close Market'}
-            </button>
+              <button 
+                onClick={handleDefragmentalizeBond}
+                disabled={isClosingMarket || market.tokensSold > BigInt(0)}
+                className="flex items-center gap-2 px-4 py-2 border border-red-300 text-red-700 rounded-lg hover:bg-red-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                title={market.tokensSold > BigInt(0) ? "Cannot close market with sold tokens" : "Close market and redeem NFTs"}
+              >
+                {isClosingMarket ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <Power className="h-4 w-4" />
+                )}
+                {isClosingMarket ? 'Closing...' : 'Close Market'}
+              </button>
+            </div>
           )}
         </div>
       </div>
@@ -1265,7 +1299,7 @@ export default function MarketDetails({ bondId, onBack }: MarketDetailsProps) {
                 <TrendingUp className="h-4 w-4 text-green-500 mr-1" />
                 <span>Buy: <span className="text-green-600 font-medium">
                   {buyCostData && Array.isArray(buyCostData) && buyCostData.length >= 1 && parseInt(buyAmount) > 0 
-                    ? formatEthPrice(buyCostData[0] / BigInt(parseInt(buyAmount))) // totalCost / amount
+                    ? formatEthPrice(buyCostData[0] / BigInt(Math.max(1, parseInt(buyAmount)))) // totalCost / amount (prevent div by 0)
                     : defaultBuyCostData && Array.isArray(defaultBuyCostData) && defaultBuyCostData.length >= 1
                       ? formatEthPrice(defaultBuyCostData[0]) // totalCost for 1 token
                       : formatEthPrice(market.currentPrice)
@@ -1276,10 +1310,10 @@ export default function MarketDetails({ bondId, onBack }: MarketDetailsProps) {
                 <TrendingDown className="h-4 w-4 text-red-500 mr-1" />
                 <span>Sell: <span className="text-red-600 font-medium">
                   {sellRefundData && Array.isArray(sellRefundData) && sellRefundData.length >= 3 && parseInt(sellAmount) > 0 
-                    ? formatEthPrice(sellRefundData[2] / BigInt(parseInt(sellAmount))) // userReceives / amount
+                    ? formatEthPrice(sellRefundData[2] / BigInt(Math.max(1, parseInt(sellAmount)))) // userReceives / amount (prevent div by 0)
                     : defaultSellRefundData && Array.isArray(defaultSellRefundData) && defaultSellRefundData.length >= 3
                       ? formatEthPrice(defaultSellRefundData[2]) // userReceives for 1 token
-                      : market.tokensSold > 0 
+                      : market.tokensSold > BigInt(0) 
                         ? formatEthPrice(market.ethReserve / market.tokensSold) 
                         : '0.00000'
                   } ETH
