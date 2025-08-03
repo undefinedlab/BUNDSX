@@ -318,257 +318,93 @@ export default function MarketDetails({ bondId, onBack }: MarketDetailsProps) {
     // Ensure all price points have timestamps for the time-based chart
     const now = Math.floor(Date.now() / 1000)
     
-    // Function to ensure minimum spacing between transaction points (in seconds)
-    const ensureMinimumSpacing = (transactions: Transaction[], minSpacingSeconds: number = 3600) => {
-      if (transactions.length <= 1) return transactions;
-      
-      // Sort by timestamp
-      const sorted = [...transactions].sort((a, b) => parseInt(a.timestamp) - parseInt(b.timestamp));
-      
-      // First pass - identify transactions that are too close
-      for (let i = 1; i < sorted.length; i++) {
-        const prevTime = parseInt(sorted[i-1].timestamp);
-        const currTime = parseInt(sorted[i].timestamp);
-        
-        if (currTime - prevTime < minSpacingSeconds) {
-          // Adjust timestamp to ensure minimum spacing
-          sorted[i].timestamp = (prevTime + minSpacingSeconds).toString();
-        }
-      }
-      
-      return sorted;
-    }
-    
-    // Add transaction-based data points if available
+    // Simple chart logic: start from 0, go up with buys, down with sells
     if (transactionHistory.length > 0) {
-      console.log('Processing transaction history for chart');
+      console.log('Processing transaction history for simple chart');
       
-      // Sort transactions by timestamp (oldest first) and ensure minimum spacing
-      const filteredTxs = [...transactionHistory]
-        .filter(tx => tx.transactionType === 'buy' || tx.transactionType === 'sell' || tx.transactionType === 'market_created');
+      // Sort transactions by timestamp (oldest first)
+      const sortedTxs = [...transactionHistory]
+        .filter(tx => tx.transactionType === 'buy' || tx.transactionType === 'sell' || tx.transactionType === 'market_created')
+        .sort((a, b) => parseInt(a.timestamp) - parseInt(b.timestamp));
       
-      // Apply minimum spacing of 2 hours between transactions
-      const sortedTxs = ensureMinimumSpacing(filteredTxs, 7200);
+      console.log('Sorted transactions:', sortedTxs.length);
       
-      console.log('Sorted transactions with spacing:', sortedTxs.length);
-      
-      // Find market creation event
-      const marketCreationEvent = sortedTxs.find(tx => tx.transactionType === 'market_created');
-      const firstEventTimestamp = sortedTxs.length > 0 ? parseInt(sortedTxs[0].timestamp) : Math.floor(Date.now() / 1000) - 86400;
-      
-      // Start with a base point at token 0
+      // Start point at 0
       historyPoints.push({
         tokenNumber: 0,
         price: 0,
-        timestamp: marketCreationEvent ? parseInt(marketCreationEvent.timestamp) - 3600 : firstEventTimestamp - 86400
+        timestamp: sortedTxs.length > 0 ? parseInt(sortedTxs[0].timestamp) - 3600 : Math.floor(Date.now() / 1000) - 86400
       });
       
-      // Add market creation event if available
-      if (marketCreationEvent) {
-        historyPoints.push({
-          tokenNumber: 0,
-          price: 0.0001, // Very small initial price
-          timestamp: parseInt(marketCreationEvent.timestamp),
-          type: 'market_created',
-          hash: marketCreationEvent.hash,
-          ethAmount: "0.0001" // Small value for market creation
-        });
-      }
+      // Track current price (starts at 0)
+      let currentPrice = 0;
       
-      // Track token count over time
-      let tokenCount = 0;
-      
-      // Process each transaction chronologically
+      // Process each transaction
       for (const tx of sortedTxs) {
-        // Skip market_created as we've already added it
-        if (tx.transactionType === 'market_created') continue;
-        
-        // Calculate price based on current token count - handle potential Infinity
-        let currentPrice = 0;
-        try {
-          // Safely convert to BigInt with error handling
-          const safeTokenCount = isFinite(tokenCount) && tokenCount >= 0 ? BigInt(Math.floor(tokenCount)) : BigInt(0);
-          currentPrice = Number(formatEther(calculateTokenPrice(safeTokenCount)));
-        } catch (err) {
-          console.error('Error calculating current price:', err);
-          currentPrice = 0.001; // Fallback price
-        }
-        
-        if (tx.transactionType === 'buy' && tx.ethAmount) {
-          // Estimate tokens bought with safety checks
-          const ethSpent = parseFloat(tx.ethAmount) || 0;
-          const estimatedTokens = currentPrice > 0 ? Math.max(1, Math.round(ethSpent / currentPrice)) : 1;
-          
-          console.log(`Buy TX: ${tx.hash?.slice(0, 6)} - ETH: ${ethSpent}, Est. Tokens: ${estimatedTokens}, Price: ${currentPrice}`);
-          
-          // Update token count with safety check
-          tokenCount = Math.max(0, tokenCount + estimatedTokens);
-          
-          // Calculate new price after buying with safety check
-          let newPrice = 0;
-          try {
-            const safeTokenCount = isFinite(tokenCount) && tokenCount >= 0 ? BigInt(Math.floor(tokenCount)) : BigInt(1);
-            newPrice = Number(formatEther(calculateTokenPrice(safeTokenCount)));
-          } catch (err) {
-            console.error('Error calculating new price after buy:', err);
-            newPrice = currentPrice * 1.05; // Fallback: 5% increase
-          }
-          
-          // Add point for buy transaction
+        if (tx.transactionType === 'market_created') {
+          // Market created - set initial price
+          currentPrice = 0.001; // Start at 0.001 ETH
           historyPoints.push({
-            tokenNumber: tokenCount,
-            price: newPrice,
+            tokenNumber: 0,
+            price: currentPrice,
+            timestamp: parseInt(tx.timestamp),
+            type: 'market_created',
+            hash: tx.hash,
+            ethAmount: "0.001"
+          });
+        } else if (tx.transactionType === 'buy') {
+          // Buy transaction - price goes up linearly
+          currentPrice += 0.001; // Each buy increases price by 0.001 ETH
+          historyPoints.push({
+            tokenNumber: historyPoints.length, // Simple counter
+            price: currentPrice,
             timestamp: parseInt(tx.timestamp),
             type: 'buy',
             hash: tx.hash,
-            ethAmount: tx.ethAmount
+            ethAmount: tx.ethAmount || "0.001"
           });
-          
-          console.log(`Added buy point: Tokens=${tokenCount}, Price=${newPrice}, Time=${new Date(parseInt(tx.timestamp) * 1000).toLocaleString()}`);
-          
-        } else if (tx.transactionType === 'sell' && tx.ethAmount) {
-          // Estimate tokens sold with safety checks
-          const ethReceived = parseFloat(tx.ethAmount) || 0;
-          const estimatedTokens = currentPrice > 0 ? Math.max(1, Math.round(ethReceived / currentPrice)) : 1;
-          
-          console.log(`Sell TX: ${tx.hash?.slice(0, 6)} - ETH: ${ethReceived}, Est. Tokens: ${estimatedTokens}, Price: ${currentPrice}`);
-          
-          // Update token count with safety check
-          tokenCount = Math.max(0, tokenCount - estimatedTokens);
-          
-          // Calculate new price after selling with safety check
-          let newPrice = 0;
-          try {
-            const safeTokenCount = isFinite(tokenCount) && tokenCount > 0 ? BigInt(Math.floor(tokenCount)) : BigInt(1);
-            newPrice = Number(formatEther(calculateTokenPrice(safeTokenCount)));
-          } catch (err) {
-            console.error('Error calculating new price after sell:', err);
-            newPrice = currentPrice * 0.95; // Fallback: 5% decrease
-          }
-          
-          // Add point for sell transaction
+        } else if (tx.transactionType === 'sell') {
+          // Sell transaction - price goes down linearly
+          currentPrice = Math.max(0.001, currentPrice - 0.001); // Each sell decreases price by 0.001 ETH, minimum 0.001
           historyPoints.push({
-            tokenNumber: tokenCount,
-            price: newPrice,
+            tokenNumber: historyPoints.length, // Simple counter
+            price: currentPrice,
             timestamp: parseInt(tx.timestamp),
             type: 'sell',
             hash: tx.hash,
-            ethAmount: tx.ethAmount
+            ethAmount: tx.ethAmount || "0.001"
           });
-          
-          console.log(`Added sell point: Tokens=${tokenCount}, Price=${newPrice}, Time=${new Date(parseInt(tx.timestamp) * 1000).toLocaleString()}`);
         }
       }
       
-      // Add current state point if we have transactions
-      if (sortedTxs.length > 0) {
-        try {
-          // Safely handle tokensSold conversion
-          const safeTokensSold = isFinite(tokensSold) && tokensSold >= 0 ? BigInt(Math.floor(tokensSold)) : BigInt(1);
-          const currentPrice = Number(formatEther(calculateTokenPrice(safeTokensSold)));
-          
-          // Get the last transaction's ethAmount or use a small default
-          const lastTx = sortedTxs[sortedTxs.length - 1];
-          const lastEthAmount = lastTx.ethAmount ? lastTx.ethAmount : "0.0002";
-          
-          historyPoints.push({
-            tokenNumber: tokensSold,
-            price: currentPrice,
-            timestamp: Math.floor(Date.now() / 1000),
-            ethAmount: lastEthAmount // Use the last transaction's value
-          });
-        } catch (err) {
-          console.error('Error calculating current price point:', err);
-        }
-      }
-      
-      console.log(`Generated ${historyPoints.length} transaction-based history points`);
+      console.log(`Generated ${historyPoints.length} simple transaction points`);
     } else {
-      // No transactions, generate a simple curve
-      // Start point - 24 hours ago
+      // No transactions - simple default curve
+      const now = Math.floor(Date.now() / 1000);
+      
+      // Start at 0
       historyPoints.push({
         tokenNumber: 0,
         price: 0,
         timestamp: now - 86400
       });
       
-      // Add market creation point - 12 hours ago
+      // Market created
       historyPoints.push({
         tokenNumber: 0,
-        price: 0.0001, // Very small initial price
-        timestamp: now - 43200, // 12 hours ago
+        price: 0.001,
+        timestamp: now - 43200,
         type: 'market_created',
-        ethAmount: "0.0001" // Small value for market creation
+        ethAmount: "0.001"
       });
       
-      // Current point
-      if (tokensSold > 0) {
-        try {
-          // Safely handle tokensSold conversion
-          const safeTokensSold = isFinite(tokensSold) && tokensSold >= 0 ? BigInt(Math.floor(tokensSold)) : BigInt(1);
-          const currentPrice = Number(formatEther(calculateTokenPrice(safeTokensSold)));
-          
-          historyPoints.push({
-            tokenNumber: tokensSold,
-            price: currentPrice,
-            timestamp: now,
-            ethAmount: "0.0002" // Small value for current point
-          });
-        } catch (err) {
-          console.error('Error calculating current price point in no-transactions case:', err);
-          // Add a fallback point with estimated price
-          historyPoints.push({
-            tokenNumber: tokensSold,
-            price: 0.0001 * tokensSold,
-            timestamp: now,
-            ethAmount: "0.0002" // Small value for current point
-          });
-        }
-      }
-    }
-    
-    // Generate theoretical curve points for reference
-    const maxPoints = 20;
-    const curvePoints: PricePoint[] = [];
-    
-    // Generate curve points with safety checks
-    try {
-      const step = Math.max(1, Math.floor(tokensForSale / maxPoints));
-      for (let i = 0; i <= tokensForSale; i += step) {
-        try {
-          const tokenNumber = i;
-          // Safely convert to BigInt
-          const safeTokenNumber = isFinite(tokenNumber) && tokenNumber >= 0 ? BigInt(Math.floor(tokenNumber)) : BigInt(0);
-          const price = Number(formatEther(calculateTokenPrice(safeTokenNumber)));
-          curvePoints.push({ tokenNumber, price });
-        } catch (err) {
-          console.error(`Error calculating price for token ${i}:`, err);
-        }
-      }
-      
-      // Always include the current position
-      if (tokensSold > 0) {
-        try {
-          const safeTokensSold = isFinite(tokensSold) && tokensSold >= 0 ? BigInt(Math.floor(tokensSold)) : BigInt(1);
-          const price = Number(formatEther(calculateTokenPrice(safeTokensSold)));
-          curvePoints.push({ tokenNumber: tokensSold, price });
-        } catch (err) {
-          console.error('Error calculating current position price:', err);
-        }
-      }
-      
-      // Always include the final token
-      if (tokensForSale > 0) {
-        try {
-          const safeTokensForSale = isFinite(tokensForSale) && tokensForSale >= 0 ? BigInt(Math.floor(tokensForSale)) : BigInt(1);
-          const price = Number(formatEther(calculateTokenPrice(safeTokensForSale)));
-          curvePoints.push({ tokenNumber: tokensForSale, price });
-        } catch (err) {
-          console.error('Error calculating final token price:', err);
-        }
-      }
-    } catch (err) {
-      console.error('Error generating curve points:', err);
+            // Current state
+      historyPoints.push({
+        tokenNumber: 1,
+        price: 0.002,
+        timestamp: now,
+        ethAmount: "0.002"
+      });
     }
     
     // Sort history points by timestamp for proper time-based chart
@@ -579,11 +415,10 @@ export default function MarketDetails({ bondId, onBack }: MarketDetailsProps) {
       return 0;
     });
     
-    console.log(`Final chart has ${historyPoints.length} history points and ${curvePoints.length} curve points`);
+    console.log(`Final chart has ${historyPoints.length} history points`);
     
-    // Set both datasets
+    // Set the dataset
     setPriceHistory(historyPoints);
-    setCurvePoints(curvePoints);
   }, [transactionHistory]) // Add dependencies
 
   // Calculate token price based on its position (linear curve)
@@ -1059,7 +894,7 @@ export default function MarketDetails({ bondId, onBack }: MarketDetailsProps) {
         label: 'Bond Price (ETH)',
         data: priceHistory.map(p => ({
           x: p.timestamp ? p.timestamp * 1000 : Date.now(), // Convert to milliseconds for Chart.js
-          y: ensureMinimumValue(weiToEth(BigInt(Math.floor(p.price * 1e18))), 0.00001) // Convert to proper ETH value
+          y: ensureMinimumValue(p.price, 0.00001) // Use price directly (already in ETH)
         })),
         borderColor: 'rgb(59, 130, 246)', // blue
         backgroundColor: 'rgba(59, 130, 246, 0.1)',
@@ -1182,7 +1017,7 @@ export default function MarketDetails({ bondId, onBack }: MarketDetailsProps) {
         // Set a reasonable max value based on bond prices (in ETH)
         suggestedMax: Math.max(
           ...priceHistory
-            .map(p => weiToEth(BigInt(Math.floor(p.price * 1e18))))
+            .map(p => p.price)
         ) * 1.2 || 0.001
       }
     },
