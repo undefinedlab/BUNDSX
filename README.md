@@ -1,6 +1,7 @@
-NFT Bond Liquidity Pump 🚀
+# NFT Bond Liquidity Pump 🚀
 
-A Novel DeFi Primitive for NFT Liquidity Transformation Through Bonding Curve Mechanics
+> A Novel DeFi Primitive for NFT Liquidity Transformation Through Bonding Curve Mechanics
+
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![TypeScript](https://img.shields.io/badge/TypeScript-007ACC?style=flat&logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
@@ -58,7 +59,7 @@ We have developed a protocol that creates liquidity without requiring external c
 
 ## 🌊 The Core Protocol Flow
 
-
+```
 ┌─────────────────────────────────────────────────────────────┐
 │                    ENTRY: BOND CREATION                    │
 │                                                             │
@@ -104,7 +105,7 @@ We have developed a protocol that creates liquidity without requiring external c
 │  • Accumulated fee vault value                             │
 │  • New arbitrage opportunities created                     │
 └─────────────────────────────────────────────────────────────┘
-
+```
 
 
 
@@ -478,7 +479,7 @@ Our protocol enables sophisticated multi-dimensional strategies that traditional
 
 
 
-### The Foundation Philosophy
+## The Foundation Philosophy
 
 We believe in building **open, adaptable systems** rather than rigid protocols. Our modular design philosophy means:
 
